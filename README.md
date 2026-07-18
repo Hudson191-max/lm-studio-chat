@@ -208,6 +208,18 @@ lm-studio-chat/
 - **[Tailwind CSS](https://tailwindcss.com/)** — Utility-first CSS
 - **[react-markdown](https://github.com/remarkjs/react-markdown)** — Markdown rendering
 
+## Disclaimer
+
+> **This project was generated entirely by AI (GLM / Z.ai).** The code is provided as-is for educational and personal use.
+>
+> - **No warranty** — This software is provided "as is" without warranty of any kind, express or implied. Use at your own risk.
+> - **Security** — While basic security measures are in place (scrypt password hashing, JWT sessions), this is a personal project, not a production-hardened application. The author assumes no responsibility for data breaches, unauthorized access, or any security incidents.
+> - **Data privacy** — All data (messages, account credentials, conversations) is stored **locally on your machine** in a SQLite database. No data is sent to any third-party server except LM Studio running on your own PC. However, if you expose the server via Cloudflare Tunnel, you are responsible for securing access.
+> - **No liability** — The author is not responsible for any leaks, data loss, system damage, or any other issues arising from the use of this software. You are solely responsible for how you deploy, configure, and use this tool.
+> - **Not audited** — This code has not been professionally security-audited. If you plan to expose it to the internet, consider additional security measures (HTTPS, rate limiting, fail2ban, etc.).
+>
+> By using this software, you accept full responsibility for any consequences.
+
 ## License
 
 MIT
