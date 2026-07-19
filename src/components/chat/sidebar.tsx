@@ -2,19 +2,16 @@
 
 import { useChatStore } from '@/store/chat-store'
 import { cn } from '@/lib/utils'
-import { Plus, MessageSquare, Trash2, PanelLeftClose, Settings, Cpu, Wifi, WifiOff, LogOut } from 'lucide-react'
+import {
+  Plus, MessageSquare, Trash2, PanelLeftClose, Settings, Cpu,
+  Wifi, WifiOff, LogOut, Search, Layers, Wrench, KeyRound
+} from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { ScrollArea } from '@/components/ui/scroll-area'
 import {
-  AlertDialog,
-  AlertDialogAction,
-  AlertDialogCancel,
-  AlertDialogContent,
-  AlertDialogDescription,
-  AlertDialogFooter,
-  AlertDialogHeader,
-  AlertDialogTitle,
-  AlertDialogTrigger,
+  AlertDialog, AlertDialogAction, AlertDialogCancel,
+  AlertDialogContent, AlertDialogDescription, AlertDialogFooter,
+  AlertDialogHeader, AlertDialogTitle, AlertDialogTrigger,
 } from '@/components/ui/alert-dialog'
 
 interface SidebarProps {
@@ -31,20 +28,23 @@ export function Sidebar({ username, onLogout }: SidebarProps) {
   const setActiveConversation = useChatStore((s) => s.setActiveConversation)
   const setSidebarOpen = useChatStore((s) => s.setSidebarOpen)
   const setSettingsOpen = useChatStore((s) => s.setSettingsOpen)
+  const setSearchOpen = useChatStore((s) => s.setSearchOpen)
+  const setProfilesOpen = useChatStore((s) => s.setProfilesOpen)
+  const setMcpOpen = useChatStore((s) => s.setMcpOpen)
+  const setChangePasswordOpen = useChatStore((s) => s.setChangePasswordOpen)
   const removeConversation = useChatStore((s) => s.removeConversation)
 
   const handleNewChat = async () => {
     try {
+      const sp = useChatStore.getState().currentSystemPrompt
       const res = await fetch('/api/conversations', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({}),
+        body: JSON.stringify({ systemPrompt: sp || undefined }),
       })
       const newConvo = await res.json()
       useChatStore.getState().addConversation(newConvo)
-    } catch {
-      // silently fail
-    }
+    } catch { /* silent */ }
   }
 
   const handleSelectConversation = async (id: string) => {
@@ -57,37 +57,33 @@ export function Sidebar({ username, onLogout }: SidebarProps) {
       const conversation = await res.json()
       if (conversation.messages) {
         useChatStore.getState().setMessages(
-          conversation.messages.map(
-            (m: { id: string; role: string; content: string }) => ({
-              id: m.id,
-              role: m.role as 'user' | 'assistant',
-              content: m.content,
-            })
-          )
+          conversation.messages.map((m: { id: string; role: string; content: string; toolCalls?: string; editedAt?: string; createdAt?: string }) => ({
+            id: m.id,
+            role: m.role as 'user' | 'assistant',
+            content: m.content,
+            toolCalls: m.toolCalls ? JSON.parse(m.toolCalls) : undefined,
+            editedAt: m.editedAt,
+            createdAt: m.createdAt,
+          }))
         )
       }
-    } catch {
-      // silently fail
-    }
+      if (conversation.systemPrompt) {
+        useChatStore.getState().setCurrentSystemPrompt(conversation.systemPrompt)
+      }
+    } catch { /* silent */ }
   }
 
   const handleDelete = async (id: string) => {
     try {
       await fetch(`/api/conversations/${id}`, { method: 'DELETE' })
       removeConversation(id)
-    } catch {
-      // silently fail
-    }
+    } catch { /* silent */ }
   }
 
   return (
     <>
-      {/* Mobile overlay */}
       {sidebarOpen && (
-        <div
-          className="fixed inset-0 z-40 bg-black/50 md:hidden"
-          onClick={() => setSidebarOpen(false)}
-        />
+        <div className="fixed inset-0 z-40 bg-black/50 md:hidden" onClick={() => setSidebarOpen(false)} />
       )}
 
       <aside
@@ -102,12 +98,7 @@ export function Sidebar({ username, onLogout }: SidebarProps) {
             <Cpu className="h-5 w-5 text-primary" />
             <span className="text-sm font-semibold">LM Studio Chat</span>
           </div>
-          <Button
-            variant="ghost"
-            size="icon"
-            className="h-8 w-8 md:hidden"
-            onClick={() => setSidebarOpen(false)}
-          >
+          <Button variant="ghost" size="icon" className="h-8 w-8 md:hidden" onClick={() => setSidebarOpen(false)}>
             <PanelLeftClose className="h-4 w-4" />
           </Button>
         </div>
@@ -129,11 +120,7 @@ export function Sidebar({ username, onLogout }: SidebarProps) {
 
         {/* New Chat Button */}
         <div className="p-2">
-          <Button
-            onClick={handleNewChat}
-            className="w-full justify-start gap-2"
-            variant="outline"
-          >
+          <Button onClick={handleNewChat} className="w-full justify-start gap-2" variant="outline">
             <Plus className="h-4 w-4" />
             New Chat
           </Button>
@@ -157,7 +144,12 @@ export function Sidebar({ username, onLogout }: SidebarProps) {
                 onClick={() => handleSelectConversation(convo.id)}
               >
                 <MessageSquare className="h-4 w-4 shrink-0 text-muted-foreground" />
-                <span className="flex-1 truncate">{convo.title}</span>
+                <div className="flex-1 min-w-0">
+                  <span className="block truncate">{convo.title}</span>
+                  {convo.profile && (
+                    <span className="block text-[10px] text-muted-foreground truncate">{convo.profile.name}</span>
+                  )}
+                </div>
                 <AlertDialog>
                   <AlertDialogTrigger asChild>
                     <Button
@@ -173,16 +165,13 @@ export function Sidebar({ username, onLogout }: SidebarProps) {
                     <AlertDialogHeader>
                       <AlertDialogTitle>Delete conversation?</AlertDialogTitle>
                       <AlertDialogDescription>
-                        This will permanently delete &quot;{convo.title}&quot; and all its messages. This action cannot be undone.
+                        This will permanently delete &quot;{convo.title}&quot; and all its messages.
                       </AlertDialogDescription>
                     </AlertDialogHeader>
                     <AlertDialogFooter>
                       <AlertDialogCancel>Cancel</AlertDialogCancel>
                       <AlertDialogAction
-                        onClick={(e) => {
-                          e.stopPropagation()
-                          handleDelete(convo.id)
-                        }}
+                        onClick={(e) => { e.stopPropagation(); handleDelete(convo.id) }}
                         className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
                       >
                         Delete
@@ -196,24 +185,36 @@ export function Sidebar({ username, onLogout }: SidebarProps) {
         </ScrollArea>
 
         {/* Footer */}
-        <div className="border-t p-2 space-y-0.5">
-          <Button
-            variant="ghost"
-            className="w-full justify-start gap-2"
-            onClick={() => setSettingsOpen(true)}
-          >
-            <Settings className="h-4 w-4" />
+        <div className="border-t p-1.5 space-y-0.5">
+          <Button variant="ghost" className="w-full justify-start gap-2 h-8 text-xs" onClick={() => setSearchOpen(true)}>
+            <Search className="h-3.5 w-3.5" />
+            Search Chats
+          </Button>
+          <Button variant="ghost" className="w-full justify-start gap-2 h-8 text-xs" onClick={() => setProfilesOpen(true)}>
+            <Layers className="h-3.5 w-3.5" />
+            Model Profiles
+          </Button>
+          <Button variant="ghost" className="w-full justify-start gap-2 h-8 text-xs" onClick={() => setMcpOpen(true)}>
+            <Wrench className="h-3.5 w-3.5" />
+            MCP Tools
+          </Button>
+          <Button variant="ghost" className="w-full justify-start gap-2 h-8 text-xs" onClick={() => setSettingsOpen(true)}>
+            <Settings className="h-3.5 w-3.5" />
             Settings
+          </Button>
+          <Button variant="ghost" className="w-full justify-start gap-2 h-8 text-xs" onClick={() => setChangePasswordOpen(true)}>
+            <KeyRound className="h-3.5 w-3.5" />
+            Change Password
           </Button>
           <Button
             variant="ghost"
-            className="w-full justify-start gap-2 text-destructive hover:text-destructive"
+            className="w-full justify-start gap-2 h-8 text-xs text-destructive hover:text-destructive"
             onClick={onLogout}
           >
-            <LogOut className="h-4 w-4" />
+            <LogOut className="h-3.5 w-3.5" />
             <span>Sign Out</span>
             {username && (
-              <span className="ml-auto text-xs text-muted-foreground">{username}</span>
+              <span className="ml-auto text-[10px] text-muted-foreground">{username}</span>
             )}
           </Button>
         </div>

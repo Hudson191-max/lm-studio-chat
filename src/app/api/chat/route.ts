@@ -3,11 +3,25 @@ import { NextRequest } from 'next/server'
 import { requireAuth } from '@/lib/auth-guard'
 
 export async function POST(request: NextRequest) {
-  const { error } = await requireAuth()
-  if (error) return error
+  const { error, session } = await requireAuth()
+  if (error) {
+    return new Response(JSON.stringify({ error }), {
+      status: 401,
+      headers: { 'Content-Type': 'application/json' },
+    })
+  }
 
   try {
-    const { messages, conversationId, model, temperature, maxTokens } = await request.json()
+    const {
+      messages,
+      conversationId,
+      model,
+      temperature,
+      maxTokens,
+      systemPrompt,
+      mcpTools,
+      regenerate,
+    } = await request.json()
 
     if (!messages || !Array.isArray(messages) || messages.length === 0) {
       return new Response(JSON.stringify({ error: 'Messages are required' }), {
@@ -16,46 +30,91 @@ export async function POST(request: NextRequest) {
       })
     }
 
-    // Fetch LM Studio URL from settings, default to localhost:1234
+    // Fetch settings
     let lmStudioUrl = 'http://localhost:1234/v1'
+    let selectedModel = model || ''
+    let temp = temperature ?? 0.7
+    let maxTokensVal = maxTokens ?? 2048
+    let convoSystemPrompt = systemPrompt || ''
+
     try {
-      const urlSetting = await db.settings.findUnique({ where: { key: 'lmStudioUrl' } })
-      if (urlSetting?.value) {
-        lmStudioUrl = urlSetting.value.replace(/\/+$/, '') // Remove trailing slashes
-      }
+      const settings = await db.settings.findMany({
+        where: { userId: session!.user.id },
+      })
+      const map: Record<string, string> = {}
+      for (const s of settings) map[s.key] = s.value
+      if (map.lmStudioUrl) lmStudioUrl = map.lmStudioUrl.replace(/\/+$/, '')
+      if (!selectedModel && map.lmStudioModel) selectedModel = map.lmStudioModel
+      if (map.temperature) temp = parseFloat(map.temperature)
+      if (map.maxTokens) maxTokensVal = parseInt(map.maxTokens)
     } catch {
-      // Use default
+      // Use defaults
     }
 
-    // Fetch model from settings if not provided
-    let selectedModel = model || ''
-    if (!selectedModel) {
+    // Get conversation for system prompt and profile override
+    if (conversationId) {
       try {
-        const modelSetting = await db.settings.findUnique({ where: { key: 'lmStudioModel' } })
-        if (modelSetting?.value) {
-          selectedModel = modelSetting.value
+        const convo = await db.conversation.findUnique({
+          where: { id: conversationId },
+          include: { profile: true },
+        })
+        if (convo) {
+          if (convo.systemPrompt && !convoSystemPrompt) {
+            convoSystemPrompt = convo.systemPrompt
+          }
+          // Profile overrides
+          if (convo.profile) {
+            if (convo.profile.url) lmStudioUrl = convo.profile.url.replace(/\/+$/, '')
+            if (convo.profile.model && !selectedModel) selectedModel = convo.profile.model
+            if (convo.profile.temperature) temp = convo.profile.temperature
+            if (convo.profile.maxTokens) maxTokensVal = convo.profile.maxTokens
+          }
         }
       } catch {
-        // Will be empty, LM Studio will use default
+        // skip
       }
     }
 
-    const temp = temperature ?? 0.7
-    const maxTokensVal = maxTokens ?? 2048
+    // Build final messages array with system prompt
+    const apiMessages: { role: string; content: string; tool_calls?: unknown[]; tool_call_id?: string }[] = []
+    if (convoSystemPrompt) {
+      apiMessages.push({ role: 'system', content: convoSystemPrompt })
+    }
+    for (const m of messages) {
+      apiMessages.push({ role: m.role, content: m.content })
+    }
 
-    // Save user message to DB
-    if (conversationId) {
+    // Build request body
+    const requestBody: Record<string, unknown> = {
+      messages: apiMessages,
+      temperature: temp,
+      max_tokens: maxTokensVal,
+      stream: true,
+    }
+
+    if (selectedModel) requestBody.model = selectedModel
+
+    // Add MCP tools if available
+    const tools = mcpTools || []
+    if (tools.length > 0) {
+      requestBody.tools = tools.map((t: { name: string; description?: string; inputSchema?: unknown }) => ({
+        type: 'function',
+        function: {
+          name: t.name,
+          description: t.description || '',
+          parameters: t.inputSchema || { type: 'object', properties: {} },
+        },
+      }))
+    }
+
+    // Save user message to DB (skip if regenerating)
+    if (conversationId && !regenerate) {
       const lastUserMsg = messages[messages.length - 1]
       if (lastUserMsg && lastUserMsg.role === 'user') {
         await db.message.create({
-          data: {
-            role: 'user',
-            content: lastUserMsg.content,
-            conversationId,
-          },
+          data: { role: 'user', content: lastUserMsg.content, conversationId },
         })
-
-        // Auto-title: use first user message if conversation is still "New Chat"
+        // Auto-title
         const convo = await db.conversation.findUnique({ where: { id: conversationId } })
         if (convo && convo.title === 'New Chat') {
           const autoTitle = lastUserMsg.content.slice(0, 60) + (lastUserMsg.content.length > 60 ? '...' : '')
@@ -67,41 +126,25 @@ export async function POST(request: NextRequest) {
       }
     }
 
-    // Build the request body for LM Studio (OpenAI-compatible)
-    const requestBody: Record<string, unknown> = {
-      messages: messages.map((m: { role: string; content: string }) => ({
-        role: m.role,
-        content: m.content,
-      })),
-      temperature: temp,
-      max_tokens: maxTokensVal,
-      stream: true,
-    }
-
-    if (selectedModel) {
-      requestBody.model = selectedModel
-    }
-
-    // Try to connect to LM Studio
+    // Connect to LM Studio
     const controller = new AbortController()
-    const timeout = setTimeout(() => controller.abort(), 30000) // 30s timeout for initial connection
+    const timeout = setTimeout(() => controller.abort(), 30000)
 
     let response: Response
     try {
       response = await fetch(`${lmStudioUrl}/chat/completions`, {
         method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-        },
+        headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(requestBody),
         signal: controller.signal,
       })
       clearTimeout(timeout)
     } catch (fetchError) {
       clearTimeout(timeout)
-      const errorMsg = fetchError instanceof Error && fetchError.name === 'AbortError'
-        ? `Connection to LM Studio timed out. Make sure LM Studio is running at ${lmStudioUrl}`
-        : `Cannot connect to LM Studio at ${lmStudioUrl}. Make sure it's running and the server is started.`
+      const errorMsg =
+        fetchError instanceof Error && fetchError.name === 'AbortError'
+          ? `Connection to LM Studio timed out. Make sure LM Studio is running at ${lmStudioUrl}`
+          : `Cannot connect to LM Studio at ${lmStudioUrl}. Make sure it's running and the server is started.`
 
       return new Response(JSON.stringify({ error: errorMsg }), {
         status: 502,
@@ -111,17 +154,16 @@ export async function POST(request: NextRequest) {
 
     if (!response.ok) {
       const errorText = await response.text()
-      return new Response(JSON.stringify({
-        error: `LM Studio returned ${response.status}: ${errorText}`
-      }), {
-        status: response.status,
-        headers: { 'Content-Type': 'application/json' },
-      })
+      return new Response(
+        JSON.stringify({ error: `LM Studio returned ${response.status}: ${errorText}` }),
+        { status: response.status, headers: { 'Content-Type': 'application/json' } }
+      )
     }
 
-    // Stream the response back
+    // Stream the response
     const encoder = new TextEncoder()
     let fullContent = ''
+    let toolCallsData: unknown[] = []
 
     const stream = new ReadableStream({
       async start(controller) {
@@ -155,18 +197,40 @@ export async function POST(request: NextRequest) {
 
               try {
                 const parsed = JSON.parse(data)
-                const content = parsed.choices?.[0]?.delta?.content
+                const delta = parsed.choices?.[0]?.delta
+
+                // Handle content
+                const content = delta?.content
                 if (content) {
                   fullContent += content
                   controller.enqueue(encoder.encode(`data: ${JSON.stringify({ content })}\n\n`))
                 }
+
+                // Handle tool calls (streaming)
+                if (delta?.tool_calls) {
+                  for (const tc of delta.tool_calls) {
+                    if (!toolCallsData[tc.index]) {
+                      toolCallsData[tc.index] = {
+                        id: tc.id || '',
+                        type: 'function',
+                        function: { name: tc.function?.name || '', arguments: '' },
+                      }
+                    }
+                    if (tc.id) toolCallsData[tc.index].id = tc.id
+                    if (tc.function?.name) toolCallsData[tc.index].function.name += tc.function.name
+                    if (tc.function?.arguments) toolCallsData[tc.index].function.arguments += tc.function.arguments
+                  }
+                  controller.enqueue(
+                    encoder.encode(`data: ${JSON.stringify({ toolCalls: toolCallsData })}\n\n`)
+                  )
+                }
               } catch {
-                // Skip malformed JSON chunks
+                // Skip malformed JSON
               }
             }
           }
 
-          // Process any remaining buffer
+          // Process remaining buffer
           if (buffer.trim()) {
             const trimmed = buffer.trim()
             if (trimmed.startsWith('data: ') && trimmed.slice(6) !== '[DONE]') {
@@ -190,7 +254,7 @@ export async function POST(request: NextRequest) {
         } finally {
           reader.releaseLock()
 
-          // Save assistant message to DB after streaming is complete
+          // Save assistant message to DB
           if (conversationId && fullContent) {
             try {
               await db.message.create({
@@ -198,6 +262,7 @@ export async function POST(request: NextRequest) {
                   role: 'assistant',
                   content: fullContent,
                   conversationId,
+                  toolCalls: JSON.stringify(toolCallsData),
                 },
               })
             } catch {
@@ -215,13 +280,10 @@ export async function POST(request: NextRequest) {
         'Connection': 'keep-alive',
       },
     })
-  } catch (error) {
+  } catch {
     return new Response(
       JSON.stringify({ error: 'An unexpected error occurred' }),
-      {
-        status: 500,
-        headers: { 'Content-Type': 'application/json' },
-      }
+      { status: 500, headers: { 'Content-Type': 'application/json' } }
     )
   }
 }

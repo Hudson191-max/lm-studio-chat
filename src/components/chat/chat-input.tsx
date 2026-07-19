@@ -1,8 +1,8 @@
 'use client'
 
-import { useState, useRef, useCallback, KeyboardEvent } from 'react'
+import { useState, useRef, useCallback, useEffect, KeyboardEvent } from 'react'
 import { useChatStore } from '@/store/chat-store'
-import { SendHorizontal, Square } from 'lucide-react'
+import { SendHorizontal, Square, Download, Sparkles } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Textarea } from '@/components/ui/textarea'
 
@@ -16,6 +16,8 @@ export function ChatInput() {
   const isStreaming = useChatStore((s) => s.isStreaming)
   const activeConversationId = useChatStore((s) => s.activeConversationId)
   const selectedModel = useChatStore((s) => s.selectedModel)
+  const currentSystemPrompt = useChatStore((s) => s.currentSystemPrompt)
+  const mcpServers = useChatStore((s) => s.mcpServers)
 
   const addMessage = useChatStore((s) => s.addMessage)
   const setStreamingContent = useChatStore((s) => s.setStreamingContent)
@@ -24,45 +26,61 @@ export function ChatInput() {
   const setConnected = useChatStore((s) => s.setConnected)
   const setConnectionError = useChatStore((s) => s.setConnectionError)
 
-  const sendMessage = useCallback(async () => {
-    const trimmed = input.trim()
-    if (!trimmed || isStreaming) return
+  // Get enabled MCP tools
+  const getMcpTools = useCallback(() => {
+    const tools: { name: string; description?: string; inputSchema?: unknown }[] = []
+    for (const server of mcpServers) {
+      if (server.enabled && server.tools) {
+        for (const tool of server.tools) {
+          tools.push(tool as { name: string; description?: string; inputSchema?: unknown })
+        }
+      }
+    }
+    return tools
+  }, [mcpServers])
 
-    // If no active conversation, create one first
+  const sendMessage = useCallback(async (overrideMessages?: typeof messages) => {
+    const msgs = overrideMessages || messages
+    const trimmed = input.trim()
+    if ((!trimmed && !overrideMessages) || isStreaming) return
+
     let conversationId = activeConversationId
+
+    // If no active conversation, create one
     if (!conversationId) {
       try {
         const res = await fetch('/api/conversations', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ title: trimmed.slice(0, 60) }),
+          body: JSON.stringify({ systemPrompt: currentSystemPrompt || undefined }),
         })
         const newConvo = await res.json()
         conversationId = newConvo.id
         useChatStore.getState().addConversation(newConvo)
-      } catch {
-        return
-      }
+      } catch { return }
     }
 
-    // Add user message to UI
-    const userMsgId = `msg-${Date.now()}-user`
-    addMessage({ id: userMsgId, role: 'user', content: trimmed })
-    setInput('')
+    // If regenerating, don't add user message
+    if (!overrideMessages) {
+      const userMsgId = `msg-${Date.now()}-user`
+      addMessage({ id: userMsgId, role: 'user', content: trimmed })
+      setInput('')
+    }
+
     setIsStreaming(true)
     setStreamingContent('')
     setConnectionError(null)
 
-    // Reset textarea height
-    if (textareaRef.current) {
-      textareaRef.current.style.height = 'auto'
-    }
+    if (textareaRef.current) textareaRef.current.style.height = 'auto'
 
-    // Build messages array for API
-    const apiMessages = [
-      ...messages.map((m) => ({ role: m.role, content: m.content })),
-      { role: 'user' as const, content: trimmed },
-    ]
+    // Build messages array
+    const apiMessages = (overrideMessages || messages).map((m) => ({
+      role: m.role,
+      content: m.content,
+    }))
+    if (!overrideMessages && trimmed) {
+      apiMessages.push({ role: 'user' as const, content: trimmed })
+    }
 
     abortControllerRef.current = new AbortController()
 
@@ -74,6 +92,9 @@ export function ChatInput() {
           messages: apiMessages,
           conversationId,
           model: selectedModel || undefined,
+          systemPrompt: currentSystemPrompt || undefined,
+          mcpTools: getMcpTools(),
+          regenerate: !!overrideMessages,
         }),
         signal: abortControllerRef.current.signal,
       })
@@ -110,16 +131,16 @@ export function ChatInput() {
               appendStreamingContent(parsed.content)
               setConnected(true)
             }
+            if (parsed.toolCalls) {
+              useChatStore.getState().setStreamingToolCalls(parsed.toolCalls)
+            }
             if (parsed.error) {
               setConnectionError(parsed.error)
             }
-          } catch {
-            // Skip
-          }
+          } catch { /* skip */ }
         }
       }
 
-      // Finalize: add the complete assistant message
       const finalContent = useChatStore.getState().streamingContent
       if (finalContent) {
         addMessage({
@@ -146,19 +167,17 @@ export function ChatInput() {
       setStreamingContent('')
       abortControllerRef.current = null
     }
-  }, [
-    input,
-    isStreaming,
-    activeConversationId,
-    selectedModel,
-    messages,
-    addMessage,
-    setStreamingContent,
-    appendStreamingContent,
-    setIsStreaming,
-    setConnected,
-    setConnectionError,
-  ])
+  }, [input, isStreaming, activeConversationId, selectedModel, messages, currentSystemPrompt, mcpServers, addMessage, setStreamingContent, appendStreamingContent, setIsStreaming, setConnected, setConnectionError, getMcpTools])
+
+  // Listen for regenerate events
+  useEffect(() => {
+    const handler = () => {
+      const msgs = useChatStore.getState().messages
+      sendMessage(msgs)
+    }
+    window.addEventListener('chat:regenerate', handler)
+    return () => window.removeEventListener('chat:regenerate', handler)
+  }, [sendMessage])
 
   const stopStreaming = useCallback(() => {
     abortControllerRef.current?.abort()
@@ -173,16 +192,31 @@ export function ChatInput() {
 
   const handleInput = (e: React.ChangeEvent<HTMLTextAreaElement>) => {
     setInput(e.target.value)
-    // Auto-resize
     const textarea = e.target
     textarea.style.height = 'auto'
     textarea.style.height = Math.min(textarea.scrollHeight, 200) + 'px'
+  }
+
+  const handleExport = async () => {
+    if (!activeConversationId) return
+    window.open(`/api/conversations/${activeConversationId}/export`, '_blank')
   }
 
   return (
     <div className="border-t bg-background px-4 py-3">
       <div className="mx-auto max-w-3xl">
         <div className="flex items-end gap-2 rounded-xl border bg-background p-2 shadow-sm focus-within:ring-2 focus-within:ring-ring/20">
+          {activeConversationId && (
+            <Button
+              variant="ghost"
+              size="icon"
+              className="h-9 w-9 shrink-0 rounded-lg"
+              onClick={handleExport}
+              title="Export conversation"
+            >
+              <Download className="h-4 w-4" />
+            </Button>
+          )}
           <Textarea
             ref={textareaRef}
             value={input}
@@ -206,16 +240,24 @@ export function ChatInput() {
             <Button
               size="icon"
               className="h-9 w-9 shrink-0 rounded-lg"
-              onClick={sendMessage}
-              disabled={!input.trim()}
+              onClick={() => sendMessage()}
+              disabled={!input.trim() && !isStreaming}
             >
               <SendHorizontal className="h-4 w-4" />
             </Button>
           )}
         </div>
-        <p className="mt-2 text-center text-xs text-muted-foreground">
-          Connected to your local LM Studio server
-        </p>
+        <div className="mt-2 flex items-center justify-between">
+          <div className="flex items-center gap-2 text-xs text-muted-foreground">
+            <Sparkles className="h-3 w-3" />
+            <span>
+              {useChatStore.getState().mcpServers.filter((s) => s.enabled).length} MCP tool(s) active
+            </span>
+          </div>
+          <p className="text-xs text-muted-foreground">
+            Connected to your local LM Studio server
+          </p>
+        </div>
       </div>
     </div>
   )

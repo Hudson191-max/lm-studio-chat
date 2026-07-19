@@ -1,0 +1,16 @@
+version: '3.8'
+
+services:
+  lm-studio-chat:
+    build: .
+    ports:
+      - "3000:3000"
+    volumes:
+      - chat-data:/app/db
+    environment:
+      - DATABASE_URL=file:/app/db/custom.db
+      - NEXTAUTH_SECRET=${NEXTAUTH_SECRET:-change-me-to-a-random-string}
+    restart: unless-stopped
+
+volumes:
+  chat-data:
