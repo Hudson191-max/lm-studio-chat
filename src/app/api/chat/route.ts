@@ -1,4 +1,11 @@
 import { db } from '@/lib/db'
+
+interface ToolCallData {
+  index: number
+  id: string
+  type: string
+  function: { name: string; arguments: string }
+}
 import { NextRequest } from 'next/server'
 import { requireAuth } from '@/lib/auth-guard'
 
@@ -158,7 +165,7 @@ export async function POST(request: NextRequest) {
     // Stream the response
     const encoder = new TextEncoder()
     let fullContent = ''
-    let toolCallsData: unknown[] = []
+    let toolCallsData: ToolCallData[] = []
 
     const stream = new ReadableStream({
       async start(controller) {
@@ -203,7 +210,7 @@ export async function POST(request: NextRequest) {
 
                 // Handle tool calls (streaming)
                 if (delta?.tool_calls) {
-                  for (const tc of delta.tool_calls) {
+                  for (const tc of delta.tool_calls as ToolCallData[]) {
                     if (!toolCallsData[tc.index]) {
                       toolCallsData[tc.index] = {
                         id: tc.id || '',
