@@ -120,3 +120,20 @@
     @apply bg-background text-foreground;
   }
 }
+
+/* KaTeX display math should not overflow horizontally inside chat bubbles */
+.katex-display {
+  overflow-x: auto;
+  overflow-y: hidden;
+  padding: 0.25rem 0;
+}
+
+/* highlight.js tokens are loaded via github-dark.css; ensure inline code in
+   chat messages keeps the muted background even when rehype-highlight wraps
+   inline code (no language class) */
+.prose :where(code):not(pre code) {
+  background: var(--muted);
+  padding: 0.1em 0.35em;
+  border-radius: 0.25em;
+  font-size: 0.85em;
+}

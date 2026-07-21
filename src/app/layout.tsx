@@ -1,6 +1,8 @@
 import type { Metadata, Viewport } from "next";
 import { Geist, Geist_Mono } from "next/font/google";
 import "./globals.css";
+import "katex/dist/katex.min.css";
+import "highlight.js/styles/github-dark.css";
 import { Toaster } from "@/components/ui/toaster";
 import { AuthProvider } from "@/components/chat/auth-provider";
 import { ThemeProvider } from "next-themes";

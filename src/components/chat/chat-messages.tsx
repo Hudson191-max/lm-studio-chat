@@ -4,8 +4,12 @@ import { useEffect, useRef, useCallback, useState } from 'react'
 import { useChatStore } from '@/store/chat-store'
 import { Bot, User, Loader2, RefreshCw, Pencil, Check, X, Wrench, Brain, ChevronDown, ChevronRight, Image as ImageIcon } from 'lucide-react'
 import ReactMarkdown from 'react-markdown'
+import remarkMath from 'remark-math'
+import rehypeKatex from 'rehype-katex'
+import rehypeHighlight from 'rehype-highlight'
 import { Button } from '@/components/ui/button'
 import { Textarea } from '@/components/ui/textarea'
+import { CodeBlock } from '@/components/chat/code-block'
 
 export function ChatMessages() {
   const messages = useChatStore((s) => s.messages)
@@ -260,7 +264,50 @@ function MessageBubble({
               )}
               {/* Main content */}
               <div className="prose prose-sm dark:prose-invert max-w-none">
-                <ReactMarkdown>{message.content}</ReactMarkdown>
+                <ReactMarkdown
+                  remarkPlugins={[remarkMath]}
+                  rehypePlugins={[
+                    rehypeKatex,
+                    [rehypeHighlight, { detect: true, ignoreMissing: true }],
+                  ]}
+                  components={{
+                    // Wrap fenced code blocks with our CodeBlock (copy button + dark surface)
+                    pre({ children, ...props }) {
+                      // children is the <code> element produced by react-markdown.
+                      // Pull its className through to CodeBlock so it can detect language.
+                      const codeEl = children as React.ReactElement<{ className?: string }> | undefined
+                      const codeClassName =
+                        codeEl && typeof codeEl === 'object' && 'props' in codeEl
+                          ? codeEl.props.className
+                          : undefined
+                      return (
+                        <CodeBlock className={codeClassName}>{children}</CodeBlock>
+                      )
+                    },
+                    // Inline code: keep simple, just style it
+                    code({ className, children, ...rest }) {
+                      // If the code has a language-* class, it's a fenced block — let <pre> handle it
+                      const isBlock = /language-/.test(className || '')
+                      if (isBlock) {
+                        return (
+                          <code className={className} {...rest}>
+                            {children}
+                          </code>
+                        )
+                      }
+                      return (
+                        <code
+                          className="rounded bg-muted px-1.5 py-0.5 font-mono text-[0.85em]"
+                          {...rest}
+                        >
+                          {children}
+                        </code>
+                      )
+                    },
+                  }}
+                >
+                  {message.content}
+                </ReactMarkdown>
                 {isStreaming && !message.thinking && (
                   <span className="ml-0.5 inline-block h-4 w-1.5 animate-pulse rounded-sm bg-current opacity-70" />
                 )}
