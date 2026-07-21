@@ -168,7 +168,7 @@ function MessageBubble({
             <Button variant="ghost" size="sm" onClick={onCancelEdit}>
               <X className="h-3.5 w-3.5 mr-1" /> Cancel
             </Button>
-            <Button size="sm" onClick={onSaveEdit} disabled={!editContent.trim()}>
+            <Button size="sm" onClick={onSaveEdit} disabled={!editContent?.trim()}>
               <Check className="h-3.5 w-3.5 mr-1" /> Save
             </Button>
           </div>
