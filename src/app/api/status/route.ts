@@ -1,6 +1,11 @@
 import { db } from '@/lib/db'
-import { NextRequest, NextResponse } from 'next/server'
+import { NextResponse } from 'next/server'
 import { requireAuth } from '@/lib/auth-guard'
+
+interface ModelInfo {
+  id: string
+  contextLength?: number
+}
 
 export async function GET() {
   const { error } = await requireAuth()
@@ -45,13 +50,16 @@ export async function GET() {
     }
 
     const data = await response.json()
-    const models = (data.data || []).map((m: { id: string }) => m.id)
+    const models: ModelInfo[] = (data.data || []).map((m: Record<string, unknown>) => ({
+      id: (m.id as string) || 'unknown',
+      contextLength: (m.context_length as number) || undefined,
+    }))
 
     return NextResponse.json({
       connected: true,
       models,
     })
-  } catch (error) {
+  } catch {
     return NextResponse.json({
       connected: false,
       error: 'Failed to check LM Studio status',

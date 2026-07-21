@@ -15,6 +15,11 @@ import {
 import { Slider } from '@/components/ui/slider'
 import { Wifi, WifiOff, RefreshCw, Loader2, Sun, Moon, Monitor } from 'lucide-react'
 
+interface ModelInfo {
+  id: string
+  contextLength?: number
+}
+
 export function SettingsDialog() {
   const settingsOpen = useChatStore((s) => s.settingsOpen)
   const setSettingsOpen = useChatStore((s) => s.setSettingsOpen)
@@ -29,9 +34,11 @@ export function SettingsDialog() {
   const [url, setUrl] = useState('http://localhost:1234/v1')
   const [temperature, setTemperature] = useState(0.7)
   const [maxTokens, setMaxTokens] = useState(2048)
+  const [maxContext, setMaxContext] = useState<number | null>(null)
   const [isChecking, setIsChecking] = useState(false)
   const [isSaving, setIsSaving] = useState(false)
   const [saved, setSaved] = useState(false)
+  const [modelDetails, setModelDetails] = useState<ModelInfo[]>([])
 
   useEffect(() => {
     if (settingsOpen) {
@@ -53,9 +60,11 @@ export function SettingsDialog() {
       const res = await fetch('/api/status')
       const data = await res.json()
       setConnected(data.connected)
-      setAvailableModels(data.models || [])
-      if (data.models?.length > 0 && !selectedModel) {
-        setSelectedModel(data.models[0])
+      const models: ModelInfo[] = data.models || []
+      setAvailableModels(models.map((m) => m.id))
+      setModelDetails(models)
+      if (models.length > 0 && !selectedModel) {
+        setSelectedModel(models[0].id)
       }
     } catch {
       setConnected(false)
@@ -65,6 +74,21 @@ export function SettingsDialog() {
   }, [setConnected, setAvailableModels, setSelectedModel, selectedModel])
 
   useEffect(() => {
+    if (!selectedModel || modelDetails.length === 0) return
+    const info = modelDetails.find((m) => m.id === selectedModel)
+    if (info?.contextLength) {
+      setMaxContext(info.contextLength)
+      if (maxTokens > info.contextLength) {
+        setMaxTokens(Math.min(info.contextLength, 4096))
+      }
+    } else {
+      setMaxContext(null)
+    }
+  }, [selectedModel, modelDetails])
+
+  const sliderMax = maxContext ? Math.min(maxContext, 131072) : 131072
+
+  useEffect(() => {
     if (settingsOpen) checkConnection()
   }, [settingsOpen, checkConnection])
 
@@ -72,14 +96,14 @@ export function SettingsDialog() {
     setIsSaving(true)
     setSaved(false)
     try {
-      const settings = [
+      const items = [
         { key: 'lmStudioUrl', value: url },
         { key: 'lmStudioModel', value: selectedModel },
         { key: 'temperature', value: temperature.toString() },
         { key: 'maxTokens', value: maxTokens.toString() },
       ]
       await Promise.all(
-        settings.map((s) =>
+        items.map((s) =>
           fetch('/api/settings', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
@@ -93,6 +117,12 @@ export function SettingsDialog() {
     } catch { /* silent */ } finally {
       setIsSaving(false)
     }
+  }
+
+  const formatCtx = (n: number) => {
+    if (n >= 1000000) return `${(n / 1000000).toFixed(1)}M`
+    if (n >= 1000) return `${(n / 1000).toFixed(0)}K`
+    return n.toString()
   }
 
   return (
@@ -160,12 +190,21 @@ export function SettingsDialog() {
                 {availableModels.length === 0 ? (
                   <SelectItem value="default" disabled>No models found</SelectItem>
                 ) : (
-                  availableModels.map((model) => (
-                    <SelectItem key={model} value={model}>{model}</SelectItem>
-                  ))
+                  availableModels.map((model) => {
+                    const info = modelDetails.find((m) => m.id === model)
+                    const ctxLabel = info?.contextLength ? ` (${formatCtx(info.contextLength)} context)` : ''
+                    return (
+                      <SelectItem key={model} value={model}>{model}{ctxLabel}</SelectItem>
+                    )
+                  })
                 )}
               </SelectContent>
             </Select>
+            {maxContext && (
+              <p className="text-xs text-muted-foreground">
+                Context window: <strong>{formatCtx(maxContext)} tokens</strong>
+              </p>
+            )}
           </div>
 
           {/* Temperature */}
@@ -184,11 +223,15 @@ export function SettingsDialog() {
           <div className="space-y-2">
             <div className="flex items-center justify-between">
               <Label>Max Tokens</Label>
-              <span className="text-sm text-muted-foreground">{maxTokens}</span>
+              <span className="text-sm text-muted-foreground">
+                {maxTokens.toLocaleString()}
+                {maxContext && <span className="text-xs ml-1">/ {formatCtx(maxContext)}</span>}
+              </span>
             </div>
-            <Slider value={[maxTokens]} onValueChange={(v) => setMaxTokens(v[0])} min={256} max={8192} step={256} />
+            <Slider value={[maxTokens]} onValueChange={(v) => setMaxTokens(v[0])} min={256} max={sliderMax} step={256} />
             <div className="flex justify-between text-xs text-muted-foreground">
-              <span>256</span><span>8192</span>
+              <span>256</span>
+              <span>{formatCtx(sliderMax)}</span>
             </div>
           </div>
         </div>
