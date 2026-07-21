@@ -2,7 +2,7 @@
 
 import { useEffect, useRef, useCallback, useState } from 'react'
 import { useChatStore } from '@/store/chat-store'
-import { Bot, User, Loader2, RefreshCw, Pencil, Check, X, Wrench } from 'lucide-react'
+import { Bot, User, Loader2, RefreshCw, Pencil, Check, X, Wrench, Brain, ChevronDown, ChevronRight, Image as ImageIcon } from 'lucide-react'
 import ReactMarkdown from 'react-markdown'
 import { Button } from '@/components/ui/button'
 import { Textarea } from '@/components/ui/textarea'
@@ -10,6 +10,7 @@ import { Textarea } from '@/components/ui/textarea'
 export function ChatMessages() {
   const messages = useChatStore((s) => s.messages)
   const streamingContent = useChatStore((s) => s.streamingContent)
+  const streamingThinking = useChatStore((s) => s.streamingThinking)
   const isStreaming = useChatStore((s) => s.isStreaming)
   const scrollRef = useRef<HTMLDivElement>(null)
   const [editingId, setEditingId] = useState<string | null>(null)
@@ -23,7 +24,7 @@ export function ChatMessages() {
 
   useEffect(() => {
     scrollToBottom()
-  }, [messages, streamingContent, scrollToBottom])
+  }, [messages, streamingContent, streamingThinking, scrollToBottom])
 
   const startEdit = (msg: typeof messages[0]) => {
     setEditingId(msg.id)
@@ -43,7 +44,6 @@ export function ChatMessages() {
         body: JSON.stringify({ content: editContent }),
       })
       useChatStore.getState().updateMessage(msgId, { content: editContent, editedAt: new Date().toISOString() })
-      // Remove messages after this one (server already did it, just update UI)
       const idx = useChatStore.getState().messages.findIndex((m) => m.id === msgId)
       if (idx >= 0) {
         useChatStore.getState().removeMessagesFrom(idx + 1)
@@ -54,16 +54,12 @@ export function ChatMessages() {
   }
 
   const handleRegenerate = () => {
-    // Remove last assistant message and re-send
     const msgs = useChatStore.getState().messages
     if (msgs.length < 2) return
     const lastMsg = msgs[msgs.length - 1]
     if (lastMsg.role !== 'assistant') return
-
     const newMsgs = msgs.slice(0, -1)
     useChatStore.getState().setMessages(newMsgs)
-
-    // Trigger resend via custom event
     window.dispatchEvent(new CustomEvent('chat:regenerate'))
   }
 
@@ -82,6 +78,7 @@ export function ChatMessages() {
             <h2 className="text-xl font-semibold">Chat with your Local AI</h2>
             <p className="mt-2 max-w-md text-sm text-muted-foreground">
               Start a conversation with your LM Studio model. Make sure LM Studio is running with the local server enabled.
+              You can paste or drag images for vision models.
             </p>
           </div>
         )}
@@ -102,15 +99,20 @@ export function ChatMessages() {
           />
         ))}
 
-        {isStreaming && streamingContent && (
+        {isStreaming && (streamingContent || streamingThinking) && (
           <MessageBubble
-            message={{ id: 'streaming', role: 'assistant', content: streamingContent }}
+            message={{
+              id: 'streaming',
+              role: 'assistant',
+              content: streamingContent,
+              thinking: streamingThinking || undefined,
+            }}
             isLast={true}
             isStreaming={true}
           />
         )}
 
-        {isStreaming && !streamingContent && (
+        {isStreaming && !streamingContent && !streamingThinking && (
           <div className="flex gap-3">
             <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-primary/10">
               <Bot className="h-4 w-4 text-primary" />
@@ -122,6 +124,42 @@ export function ChatMessages() {
           </div>
         )}
       </div>
+    </div>
+  )
+}
+
+function ThinkingBlock({ thinking, isStreaming }: { thinking: string; isStreaming?: boolean }) {
+  const [expanded, setExpanded] = useState(true)
+
+  // Auto-collapse when streaming ends
+  useEffect(() => {
+    if (!isStreaming) {
+      const timer = setTimeout(() => setExpanded(false), 500)
+      return () => clearTimeout(timer)
+    }
+  }, [isStreaming])
+
+  if (!thinking) return null
+
+  return (
+    <div className="mb-3">
+      <button
+        onClick={() => setExpanded(!expanded)}
+        className="flex items-center gap-1.5 text-xs text-muted-foreground hover:text-foreground transition-colors mb-1.5"
+      >
+        {expanded ? <ChevronDown className="h-3 w-3" /> : <ChevronRight className="h-3 w-3" />}
+        <Brain className="h-3 w-3" />
+        <span>
+          {isStreaming ? 'Reasoning...' : `Reasoning (${thinking.length} chars)`}
+        </span>
+      </button>
+      {expanded && (
+        <div className="rounded-lg border border-border/50 bg-muted/30 p-3 text-xs text-muted-foreground leading-relaxed max-h-80 overflow-y-auto"
+          style={{ scrollbarWidth: 'thin', scrollbarColor: 'var(--border) transparent' }}
+        >
+          <p className="whitespace-pre-wrap">{thinking}</p>
+        </div>
+      )}
     </div>
   )
 }
@@ -138,7 +176,7 @@ function MessageBubble({
   onCancelEdit,
   onRegenerate,
 }: {
-  message: { id: string; role: string; content: string; toolCalls?: unknown[]; editedAt?: string }
+  message: { id: string; role: string; content: string; thinking?: string; images?: string[]; toolCalls?: unknown[]; editedAt?: string }
   isLast?: boolean
   isStreaming?: boolean
   onEdit?: () => void
@@ -150,6 +188,8 @@ function MessageBubble({
   onRegenerate?: () => void
 }) {
   const isUser = message.role === 'user'
+  const hasImages = message.images && message.images.length > 0
+  const hasThinking = !!message.thinking
 
   if (isEditing && onEditContentChange) {
     return (
@@ -196,17 +236,35 @@ function MessageBubble({
         >
           {isUser ? (
             <div>
+              {/* Display images */}
+              {hasImages && (
+                <div className="mb-2 flex flex-wrap gap-2">
+                  {(message.images || []).map((img, idx) => (
+                    <div key={idx} className="overflow-hidden rounded-lg max-w-[200px]">
+                      {/* eslint-disable-next-line @next/next/no-img-element */}
+                      <img src={img} alt={`Image ${idx + 1}`} className="max-h-48 w-auto object-contain rounded-lg" />
+                    </div>
+                  ))}
+                </div>
+              )}
               <p className="whitespace-pre-wrap">{message.content}</p>
               {message.editedAt && (
                 <p className="mt-1 text-[10px] opacity-60">edited</p>
               )}
             </div>
           ) : (
-            <div className="prose prose-sm dark:prose-invert max-w-none">
-              <ReactMarkdown>{message.content}</ReactMarkdown>
-              {isStreaming && (
-                <span className="ml-0.5 inline-block h-4 w-1.5 animate-pulse rounded-sm bg-current opacity-70" />
+            <div>
+              {/* Thinking / Reasoning section */}
+              {hasThinking && (
+                <ThinkingBlock thinking={message.thinking || ''} isStreaming={isStreaming} />
               )}
+              {/* Main content */}
+              <div className="prose prose-sm dark:prose-invert max-w-none">
+                <ReactMarkdown>{message.content}</ReactMarkdown>
+                {isStreaming && !message.thinking && (
+                  <span className="ml-0.5 inline-block h-4 w-1.5 animate-pulse rounded-sm bg-current opacity-70" />
+                )}
+              </div>
             </div>
           )}
         </div>
@@ -244,7 +302,7 @@ function MessageBubble({
       {message.toolCalls && Array.isArray(message.toolCalls) && message.toolCalls.length > 0 && (
         <div className="ml-12 mt-1 flex items-center gap-1.5 text-xs text-muted-foreground">
           <Wrench className="h-3 w-3" />
-          <span>{message.toolCalls.length} tool call{(message.toolCalls as unknown[]).length > 1 ? 's' : ''}</span>
+          <span>{(message.toolCalls as unknown[]).length} tool call{(message.toolCalls as unknown[]).length > 1 ? 's' : ''}</span>
         </div>
       )}
     </div>

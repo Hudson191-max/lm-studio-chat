@@ -57,10 +57,12 @@ export function Sidebar({ username, onLogout }: SidebarProps) {
       const conversation = await res.json()
       if (conversation.messages) {
         useChatStore.getState().setMessages(
-          conversation.messages.map((m: { id: string; role: string; content: string; toolCalls?: string; editedAt?: string; createdAt?: string }) => ({
+          conversation.messages.map((m: { id: string; role: string; content: string; thinking?: string; images?: string; toolCalls?: string; editedAt?: string; createdAt?: string }) => ({
             id: m.id,
             role: m.role as 'user' | 'assistant',
             content: m.content,
+            thinking: m.thinking || undefined,
+            images: m.images ? JSON.parse(m.images) : undefined,
             toolCalls: m.toolCalls ? JSON.parse(m.toolCalls) : undefined,
             editedAt: m.editedAt,
             createdAt: m.createdAt,

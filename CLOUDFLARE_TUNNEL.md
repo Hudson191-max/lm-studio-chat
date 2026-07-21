@@ -311,6 +311,45 @@ Or use different subdomains (see the "Multiple services" example in Step 4).
 
 ---
 
+## Getting a Free Domain
+
+You need a domain name to use a named Cloudflare Tunnel with a custom domain. Here are the options, from easiest to most involved:
+
+### Option 1: Free Subdomain Services
+
+| Service | Domain Format | Cost | Approval Time | Notes |
+|---------|--------------|------|---------------|-------|
+| [eu.org](https://nic.eu.org/) | `yourname.eu.org` | Free | Days to weeks | Classic free domain, very popular, can be slow to approve |
+| [pp.ua](https://pp.ua/) | `yourname.pp.ua` | Free | Instant to days | Ukrainian free domain, reliable |
+| [US.KG](https://nic.us.kg/) | `yourname.us.kg` | Free | Instant | Free subdomains, quick registration |
+| [Afraid.org](https://freedns.afraid.org/) | `yourname.mooo.com` and 100+ others | Free | Instant | Huge selection of free subdomains |
+
+### Option 2: Cheap Domains (Recommended)
+
+If you want a proper `.com`, `.net`, or `.dev` domain without paying full price:
+
+- **Cloudflare Registrar** — Cloudflare sells domains at wholesale cost (no markup). A `.com` is ~$10/year, `.dev` ~$12/year, `.xyz` ~$2/year. If you already use Cloudflare for the tunnel, managing everything in one dashboard is convenient.
+- **Namecheap** — Often has $1-5 first-year promos for `.xyz`, `.site`, `.online`, `.store`
+- **Porkbun** — Transparent pricing, `.xyz` from ~$2/year, good privacy
+
+### Option 3: Quick Tunnel (No Domain Needed)
+
+If you just want to test remotely without buying anything:
+
+```bash
+cloudflared tunnel --url http://localhost:3000
+```
+
+This gives you a random `https://something.trycloudflare.com` URL instantly. It changes every time you restart, but it's free and requires no setup at all.
+
+### Recommended Path
+
+1. **Just testing?** Use the quick tunnel (no domain needed)
+2. **Want it permanent for free?** Register a `yourname.eu.org` or `yourname.pp.ua` domain, then follow the Named Tunnel guide above
+3. **Want a real domain cheap?** Buy a `.xyz` for ~$2/year on Cloudflare Registrar, then follow the Named Tunnel guide
+
+---
+
 ## Quick Tunnel (For Temporary Testing)
 
 If you just need temporary access without setting up a custom domain, you can use a quick tunnel:

@@ -9,6 +9,14 @@ interface ToolCallData {
 import { NextRequest } from 'next/server'
 import { requireAuth } from '@/lib/auth-guard'
 
+interface IncomingMessage {
+  role: string
+  content: string
+  images?: string[]
+  tool_calls?: unknown[]
+  tool_call_id?: string
+}
+
 export async function POST(request: NextRequest) {
   const { error, session } = await requireAuth()
   if (error) return error
@@ -23,7 +31,16 @@ export async function POST(request: NextRequest) {
       systemPrompt,
       mcpTools,
       regenerate,
-    } = await request.json()
+    } = await request.json() as {
+      messages: IncomingMessage[]
+      conversationId?: string
+      model?: string
+      temperature?: number
+      maxTokens?: number
+      systemPrompt?: string
+      mcpTools?: unknown[]
+      regenerate?: boolean
+    }
 
     if (!messages || !Array.isArray(messages) || messages.length === 0) {
       return new Response(JSON.stringify({ error: 'Messages are required' }), {
@@ -64,7 +81,6 @@ export async function POST(request: NextRequest) {
           if (convo.systemPrompt && !convoSystemPrompt) {
             convoSystemPrompt = convo.systemPrompt
           }
-          // Profile overrides
           if (convo.profile) {
             if (convo.profile.url) lmStudioUrl = convo.profile.url.replace(/\/+$/, '')
             if (convo.profile.model && !selectedModel) selectedModel = convo.profile.model
@@ -78,12 +94,25 @@ export async function POST(request: NextRequest) {
     }
 
     // Build final messages array with system prompt
-    const apiMessages: { role: string; content: string; tool_calls?: unknown[]; tool_call_id?: string }[] = []
+    // Support vision format: content can be string | array of content parts
+    const apiMessages: { role: string; content: string | Array<{ type: string; text?: string; image_url?: { url: string } }>; tool_calls?: unknown[]; tool_call_id?: string }[] = []
     if (convoSystemPrompt) {
       apiMessages.push({ role: 'system', content: convoSystemPrompt })
     }
     for (const m of messages) {
-      apiMessages.push({ role: m.role, content: m.content })
+      // If user message has images, use OpenAI vision format
+      if (m.role === 'user' && m.images && m.images.length > 0) {
+        const contentParts: Array<{ type: string; text?: string; image_url?: { url: string } }> = []
+        for (const imgUrl of m.images) {
+          contentParts.push({ type: 'image_url', image_url: { url: imgUrl } })
+        }
+        if (m.content) {
+          contentParts.push({ type: 'text', text: m.content })
+        }
+        apiMessages.push({ role: m.role, content: contentParts })
+      } else {
+        apiMessages.push({ role: m.role, content: m.content })
+      }
     }
 
     // Build request body
@@ -114,12 +143,17 @@ export async function POST(request: NextRequest) {
       const lastUserMsg = messages[messages.length - 1]
       if (lastUserMsg && lastUserMsg.role === 'user') {
         await db.message.create({
-          data: { role: 'user', content: lastUserMsg.content, conversationId },
+          data: {
+            role: 'user',
+            content: lastUserMsg.content || '',
+            images: JSON.stringify(lastUserMsg.images || []),
+            conversationId,
+          },
         })
         // Auto-title
         const convo = await db.conversation.findUnique({ where: { id: conversationId } })
         if (convo && convo.title === 'New Chat') {
-          const autoTitle = lastUserMsg.content.slice(0, 60) + (lastUserMsg.content.length > 60 ? '...' : '')
+          const autoTitle = (lastUserMsg.content || '').slice(0, 60) + ((lastUserMsg.content || '').length > 60 ? '...' : '')
           await db.conversation.update({
             where: { id: conversationId },
             data: { title: autoTitle },
@@ -165,6 +199,7 @@ export async function POST(request: NextRequest) {
     // Stream the response
     const encoder = new TextEncoder()
     let fullContent = ''
+    let fullThinking = ''
     let toolCallsData: ToolCallData[] = []
 
     const stream = new ReadableStream({
@@ -198,8 +233,27 @@ export async function POST(request: NextRequest) {
               }
 
               try {
-                const parsed = JSON.parse(data) as { choices?: Array<{ delta?: { content?: string; tool_calls?: Array<{ index: number; id?: string; function?: { name?: string; arguments?: string } }> } }> }
+                const parsed = JSON.parse(data) as {
+                  choices?: Array<{
+                    delta?: {
+                      content?: string
+                      reasoning_content?: string
+                      tool_calls?: Array<{
+                        index: number
+                        id?: string
+                        function?: { name?: string; arguments?: string }
+                      }>
+                    }
+                  }>
+                }
                 const delta = parsed.choices?.[0]?.delta
+
+                // Handle reasoning/thinking content (e.g. DeepSeek R1)
+                const reasoning = delta?.reasoning_content
+                if (reasoning) {
+                  fullThinking += reasoning
+                  controller.enqueue(encoder.encode(`data: ${JSON.stringify({ thinking: reasoning })}\n\n`))
+                }
 
                 // Handle content
                 const content = delta?.content
@@ -240,6 +294,11 @@ export async function POST(request: NextRequest) {
               try {
                 const parsed = JSON.parse(trimmed.slice(6))
                 const content = parsed.choices?.[0]?.delta?.content
+                const reasoning = parsed.choices?.[0]?.delta?.reasoning_content
+                if (reasoning) {
+                  fullThinking += reasoning
+                  controller.enqueue(encoder.encode(`data: ${JSON.stringify({ thinking: reasoning })}\n\n`))
+                }
                 if (content) {
                   fullContent += content
                   controller.enqueue(encoder.encode(`data: ${JSON.stringify({ content })}\n\n`))
@@ -258,12 +317,13 @@ export async function POST(request: NextRequest) {
           reader.releaseLock()
 
           // Save assistant message to DB
-          if (conversationId && fullContent) {
+          if (conversationId && (fullContent || fullThinking)) {
             try {
               await db.message.create({
                 data: {
                   role: 'assistant',
                   content: fullContent,
+                  thinking: fullThinking,
                   conversationId,
                   toolCalls: JSON.stringify(toolCallsData),
                 },

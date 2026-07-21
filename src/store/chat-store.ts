@@ -4,6 +4,8 @@ export interface Message {
   id: string
   role: 'user' | 'assistant' | 'system' | 'tool'
   content: string
+  thinking?: string
+  images?: string[]
   toolCalls?: unknown[]
   editedAt?: string
   createdAt?: string
@@ -17,7 +19,7 @@ export interface Conversation {
   profile?: { id: string; name: string }
   createdAt: string
   updatedAt: string
-  messages?: { id: string; role: string; content: string; createdAt: string }[]
+  messages?: { id: string; role: string; content: string; thinking?: string; images?: string; toolCalls?: string; editedAt?: string; createdAt?: string }[]
 }
 
 export interface ModelProfile {
@@ -53,6 +55,7 @@ interface ChatState {
   // Messages
   messages: Message[]
   streamingContent: string
+  streamingThinking: string
   isStreaming: boolean
   streamingToolCalls: unknown[]
 
@@ -95,6 +98,8 @@ interface ChatState {
   removeMessagesFrom: (index: number) => void
   setStreamingContent: (content: string) => void
   appendStreamingContent: (content: string) => void
+  setStreamingThinking: (content: string) => void
+  appendStreamingThinking: (content: string) => void
   setIsStreaming: (streaming: boolean) => void
   clearCurrentChat: () => void
 
@@ -133,6 +138,7 @@ export const useChatStore = create<ChatState>((set) => ({
 
   messages: [],
   streamingContent: '',
+  streamingThinking: '',
   isStreaming: false,
   streamingToolCalls: [],
 
@@ -161,6 +167,7 @@ export const useChatStore = create<ChatState>((set) => ({
       activeConversationId: conversation.id,
       messages: [],
       streamingContent: '',
+      streamingThinking: '',
       currentSystemPrompt: conversation.systemPrompt || '',
     })),
   removeConversation: (id) =>
@@ -193,8 +200,11 @@ export const useChatStore = create<ChatState>((set) => ({
   setStreamingContent: (content) => set({ streamingContent: content }),
   appendStreamingContent: (content) =>
     set((state) => ({ streamingContent: state.streamingContent + content })),
+  setStreamingThinking: (content) => set({ streamingThinking: content }),
+  appendStreamingThinking: (content) =>
+    set((state) => ({ streamingThinking: state.streamingThinking + content })),
   setIsStreaming: (streaming) => set({ isStreaming: streaming }),
-  clearCurrentChat: () => set({ messages: [], streamingContent: '', streamingToolCalls: [] }),
+  clearCurrentChat: () => set({ messages: [], streamingContent: '', streamingThinking: '', streamingToolCalls: [] }),
 
   setConnected: (connected) => set({ isConnected: connected }),
   setAvailableModels: (models) => set({ availableModels: models }),

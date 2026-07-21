@@ -1,15 +1,26 @@
 'use client'
 
-import { useState, useRef, useCallback, useEffect, KeyboardEvent } from 'react'
+import { useState, useRef, useCallback, useEffect, KeyboardEvent, ClipboardEvent, DragEvent } from 'react'
 import { useChatStore } from '@/store/chat-store'
-import { SendHorizontal, Square, Download, Sparkles } from 'lucide-react'
+import { SendHorizontal, Square, Download, Sparkles, ImagePlus, X } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Textarea } from '@/components/ui/textarea'
 
+function fileToBase64(file: File): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader()
+    reader.onload = () => resolve(reader.result as string)
+    reader.onerror = reject
+    reader.readAsDataURL(file)
+  })
+}
+
 export function ChatInput() {
   const [input, setInput] = useState('')
+  const [images, setImages] = useState<string[]>([])
   const textareaRef = useRef<HTMLTextAreaElement>(null)
   const abortControllerRef = useRef<AbortController | null>(null)
+  const dropRef = useRef<HTMLDivElement>(null)
 
   const messages = useChatStore((s) => s.messages)
   const streamingContent = useChatStore((s) => s.streamingContent)
@@ -22,11 +33,11 @@ export function ChatInput() {
   const addMessage = useChatStore((s) => s.addMessage)
   const setStreamingContent = useChatStore((s) => s.setStreamingContent)
   const appendStreamingContent = useChatStore((s) => s.appendStreamingContent)
+  const appendStreamingThinking = useChatStore((s) => s.appendStreamingThinking)
   const setIsStreaming = useChatStore((s) => s.setIsStreaming)
   const setConnected = useChatStore((s) => s.setConnected)
   const setConnectionError = useChatStore((s) => s.setConnectionError)
 
-  // Get enabled MCP tools
   const getMcpTools = useCallback(() => {
     const tools: { name: string; description?: string; inputSchema?: unknown }[] = []
     for (const server of mcpServers) {
@@ -39,14 +50,50 @@ export function ChatInput() {
     return tools
   }, [mcpServers])
 
+  // Handle image paste
+  const handlePaste = useCallback(async (e: ClipboardEvent<HTMLTextAreaElement>) => {
+    const items = e.clipboardData?.items
+    if (!items) return
+    for (const item of Array.from(items)) {
+      if (item.type.startsWith('image/')) {
+        e.preventDefault()
+        const file = item.getAsFile()
+        if (file) {
+          const base64 = await fileToBase64(file)
+          setImages((prev) => [...prev, base64])
+        }
+        return
+      }
+    }
+  }, [])
+
+  // Handle drag and drop
+  const handleDragOver = useCallback((e: DragEvent<HTMLDivElement>) => {
+    e.preventDefault()
+    e.stopPropagation()
+  }, [])
+
+  const handleDrop = useCallback(async (e: DragEvent<HTMLDivElement>) => {
+    e.preventDefault()
+    e.stopPropagation()
+    const files = Array.from(e.dataTransfer?.files || [])
+    const imageFiles = files.filter((f) => f.type.startsWith('image/'))
+    if (imageFiles.length === 0) return
+    const base64List = await Promise.all(imageFiles.map(fileToBase64))
+    setImages((prev) => [...prev, ...base64List])
+  }, [])
+
+  const removeImage = useCallback((index: number) => {
+    setImages((prev) => prev.filter((_, i) => i !== index))
+  }, [])
+
   const sendMessage = useCallback(async (overrideMessages?: typeof messages) => {
     const msgs = overrideMessages || messages
     const trimmed = input.trim()
-    if ((!trimmed && !overrideMessages) || isStreaming) return
+    if ((!trimmed && images.length === 0 && !overrideMessages) || isStreaming) return
 
     let conversationId = activeConversationId
 
-    // If no active conversation, create one
     if (!conversationId) {
       try {
         const res = await fetch('/api/conversations', {
@@ -60,26 +107,30 @@ export function ChatInput() {
       } catch { return }
     }
 
-    // If regenerating, don't add user message
+    const currentImages = images.length > 0 ? [...images] : undefined
+
     if (!overrideMessages) {
       const userMsgId = `msg-${Date.now()}-user`
-      addMessage({ id: userMsgId, role: 'user', content: trimmed })
+      addMessage({ id: userMsgId, role: 'user', content: trimmed, images: currentImages })
       setInput('')
+      setImages([])
     }
 
     setIsStreaming(true)
     setStreamingContent('')
+    useChatStore.getState().setStreamingThinking('')
     setConnectionError(null)
 
     if (textareaRef.current) textareaRef.current.style.height = 'auto'
 
-    // Build messages array
+    // Build messages array - include images for user messages
     const apiMessages = (overrideMessages || messages).map((m) => ({
       role: m.role,
       content: m.content,
+      images: m.images,
     }))
-    if (!overrideMessages && trimmed) {
-      apiMessages.push({ role: 'user' as const, content: trimmed })
+    if (!overrideMessages) {
+      apiMessages.push({ role: 'user' as const, content: trimmed, images: currentImages })
     }
 
     abortControllerRef.current = new AbortController()
@@ -131,6 +182,9 @@ export function ChatInput() {
               appendStreamingContent(parsed.content)
               setConnected(true)
             }
+            if (parsed.thinking) {
+              appendStreamingThinking(parsed.thinking)
+            }
             if (parsed.toolCalls) {
               useChatStore.getState().setStreamingToolCalls(parsed.toolCalls)
             }
@@ -142,21 +196,25 @@ export function ChatInput() {
       }
 
       const finalContent = useChatStore.getState().streamingContent
-      if (finalContent) {
+      const finalThinking = useChatStore.getState().streamingThinking
+      if (finalContent || finalThinking) {
         addMessage({
           id: `msg-${Date.now()}-assistant`,
           role: 'assistant',
           content: finalContent,
+          thinking: finalThinking || undefined,
         })
       }
     } catch (error) {
       if (error instanceof Error && error.name !== 'AbortError') {
         const errContent = useChatStore.getState().streamingContent
-        if (errContent) {
+        const errThinking = useChatStore.getState().streamingThinking
+        if (errContent || errThinking) {
           addMessage({
             id: `msg-${Date.now()}-assistant`,
             role: 'assistant',
             content: errContent,
+            thinking: errThinking || undefined,
           })
         }
         setConnectionError(error.message)
@@ -165,9 +223,10 @@ export function ChatInput() {
     } finally {
       setIsStreaming(false)
       setStreamingContent('')
+      useChatStore.getState().setStreamingThinking('')
       abortControllerRef.current = null
     }
-  }, [input, isStreaming, activeConversationId, selectedModel, messages, currentSystemPrompt, mcpServers, addMessage, setStreamingContent, appendStreamingContent, setIsStreaming, setConnected, setConnectionError, getMcpTools])
+  }, [input, images, isStreaming, activeConversationId, selectedModel, messages, currentSystemPrompt, mcpServers, addMessage, setStreamingContent, appendStreamingContent, appendStreamingThinking, setIsStreaming, setConnected, setConnectionError, getMcpTools])
 
   // Listen for regenerate events
   useEffect(() => {
@@ -202,10 +261,46 @@ export function ChatInput() {
     window.open(`/api/conversations/${activeConversationId}/export`, '_blank')
   }
 
+  const handleImageUpload = () => {
+    const fileInput = document.createElement('input')
+    fileInput.type = 'file'
+    fileInput.accept = 'image/*'
+    fileInput.multiple = true
+    fileInput.onchange = async (e) => {
+      const files = Array.from((e.target as HTMLInputElement).files || [])
+      const base64List = await Promise.all(files.map(fileToBase64))
+      setImages((prev) => [...prev, ...base64List])
+    }
+    fileInput.click()
+  }
+
   return (
     <div className="border-t bg-background px-4 py-3">
       <div className="mx-auto max-w-3xl">
-        <div className="flex items-end gap-2 rounded-xl border bg-background p-2 shadow-sm focus-within:ring-2 focus-within:ring-ring/20">
+        {/* Image previews */}
+        {images.length > 0 && (
+          <div className="mb-2 flex flex-wrap gap-2">
+            {images.map((img, idx) => (
+              <div key={idx} className="group relative h-16 w-16 overflow-hidden rounded-lg border">
+                {/* eslint-disable-next-line @next/next/no-img-element */}
+                <img src={img} alt={`Upload ${idx + 1}`} className="h-full w-full object-cover" />
+                <button
+                  onClick={() => removeImage(idx)}
+                  className="absolute right-0.5 top-0.5 flex h-4 w-4 items-center justify-center rounded-full bg-black/60 text-white opacity-0 transition-opacity group-hover:opacity-100"
+                >
+                  <X className="h-2.5 w-2.5" />
+                </button>
+              </div>
+            ))}
+          </div>
+        )}
+
+        <div
+          ref={dropRef}
+          onDragOver={handleDragOver}
+          onDrop={handleDrop}
+          className="flex items-end gap-2 rounded-xl border bg-background p-2 shadow-sm focus-within:ring-2 focus-within:ring-ring/20"
+        >
           {activeConversationId && (
             <Button
               variant="ghost"
@@ -217,12 +312,22 @@ export function ChatInput() {
               <Download className="h-4 w-4" />
             </Button>
           )}
+          <Button
+            variant="ghost"
+            size="icon"
+            className="h-9 w-9 shrink-0 rounded-lg"
+            onClick={handleImageUpload}
+            title="Attach image"
+          >
+            <ImagePlus className="h-4 w-4" />
+          </Button>
           <Textarea
             ref={textareaRef}
             value={input}
             onChange={handleInput}
             onKeyDown={handleKeyDown}
-            placeholder="Type your message... (Enter to send, Shift+Enter for new line)"
+            onPaste={handlePaste}
+            placeholder="Type your message... (paste or drag images for vision)"
             className="min-h-[40px] max-h-[200px] flex-1 resize-none border-0 bg-transparent p-2 text-sm shadow-none focus-visible:ring-0"
             rows={1}
             disabled={isStreaming}
@@ -241,7 +346,7 @@ export function ChatInput() {
               size="icon"
               className="h-9 w-9 shrink-0 rounded-lg"
               onClick={() => sendMessage()}
-              disabled={!input.trim() && !isStreaming}
+              disabled={!input.trim() && images.length === 0}
             >
               <SendHorizontal className="h-4 w-4" />
             </Button>
