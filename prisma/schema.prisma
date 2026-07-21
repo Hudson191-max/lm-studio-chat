@@ -17,6 +17,8 @@ model Account {
   conversations   Conversation[]
   loginAttempts   LoginAttempt[]
   mcpServers      McpServer[]
+  settings        Settings[]
+  modelProfiles   ModelProfile[]
 }
 
 model Conversation {
