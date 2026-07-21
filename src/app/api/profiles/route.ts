@@ -4,7 +4,7 @@ import { NextRequest, NextResponse } from 'next/server'
 
 export async function GET() {
   const { error, session } = await requireAuth()
-  if (error) return NextResponse.json({ error }, { status: 401 })
+  if (error) return error
 
   try {
     const profiles = await db.modelProfile.findMany({
@@ -19,7 +19,7 @@ export async function GET() {
 
 export async function POST(request: NextRequest) {
   const { error, session } = await requireAuth()
-  if (error) return NextResponse.json({ error }, { status: 401 })
+  if (error) return error
 
   try {
     const { name, url, model, temperature, maxTokens, isDefault } = await request.json()

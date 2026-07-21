@@ -4,12 +4,7 @@ import { requireAuth } from '@/lib/auth-guard'
 
 export async function POST(request: NextRequest) {
   const { error, session } = await requireAuth()
-  if (error) {
-    return new Response(JSON.stringify({ error }), {
-      status: 401,
-      headers: { 'Content-Type': 'application/json' },
-    })
-  }
+  if (error) return error
 
   try {
     const {
@@ -196,7 +191,7 @@ export async function POST(request: NextRequest) {
               }
 
               try {
-                const parsed = JSON.parse(data)
+                const parsed = JSON.parse(data) as { choices?: Array<{ delta?: { content?: string; tool_calls?: Array<{ index: number; id?: string; function?: { name?: string; arguments?: string } }> } }> }
                 const delta = parsed.choices?.[0]?.delta
 
                 // Handle content

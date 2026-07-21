@@ -5,7 +5,7 @@ import { NextRequest, NextResponse } from 'next/server'
 
 export async function POST(request: NextRequest) {
   const { error, session } = await requireAuth()
-  if (error) return NextResponse.json({ error }, { status: 401 })
+  if (error) return error
 
   try {
     const { currentPassword, newPassword } = await request.json()

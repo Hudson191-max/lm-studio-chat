@@ -4,7 +4,7 @@ import { requireAuth } from '@/lib/auth-guard'
 
 export async function GET() {
   const { error } = await requireAuth()
-  if (error) return NextResponse.json({ error }, { status: 401 })
+  if (error) return error
 
   try {
     const conversations = await db.conversation.findMany({
@@ -22,7 +22,7 @@ export async function GET() {
 
 export async function POST(request: NextRequest) {
   const { error } = await requireAuth()
-  if (error) return NextResponse.json({ error }, { status: 401 })
+  if (error) return error
 
   try {
     const body = await request.json()

@@ -4,7 +4,7 @@ import { NextRequest, NextResponse } from 'next/server'
 
 export async function GET(request: NextRequest) {
   const { error, session } = await requireAuth()
-  if (error) return NextResponse.json({ error }, { status: 401 })
+  if (error) return error
 
   try {
     const q = request.nextUrl.searchParams.get('q') || ''

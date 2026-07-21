@@ -7,7 +7,7 @@ export async function GET(
   { params }: { params: Promise<{ id: string }> }
 ) {
   const { error } = await requireAuth()
-  if (error) return NextResponse.json({ error }, { status: 401 })
+  if (error) return error
 
   try {
     const { id } = await params
