@@ -213,6 +213,7 @@ export async function POST(request: NextRequest) {
                   for (const tc of delta.tool_calls as ToolCallData[]) {
                     if (!toolCallsData[tc.index]) {
                       toolCallsData[tc.index] = {
+                        index: tc.index,
                         id: tc.id || '',
                         type: 'function',
                         function: { name: tc.function?.name || '', arguments: '' },
