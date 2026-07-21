@@ -128,7 +128,7 @@ export async function POST(request: NextRequest) {
     // Add MCP tools if available
     const tools = mcpTools || []
     if (tools.length > 0) {
-      requestBody.tools = tools.map((t: { name: string; description?: string; inputSchema?: unknown }) => ({
+      requestBody.tools = (tools as Array<{ name: string; description?: string; inputSchema?: unknown }>).map((t) => ({
         type: 'function',
         function: {
           name: t.name,
