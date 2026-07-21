@@ -2,6 +2,22 @@
 echo === LM Studio Chat Setup ===
 echo.
 
+REM Create .env if missing
+echo [0/3] Checking environment...
+if not exist .env (
+    if exist .env.example (
+        copy .env.example .env >nul
+        echo Created .env from .env.example
+    ) else (
+        echo DATABASE_URL=file:./db/custom.db > .env
+        echo NEXTAUTH_SECRET=change-me-to-a-random-string >> .env
+        echo Created .env with defaults
+    )
+) else (
+    echo .env already exists, skipping
+)
+
+echo.
 echo [1/3] Installing dependencies...
 call npm install
 if %errorlevel% neq 0 (
