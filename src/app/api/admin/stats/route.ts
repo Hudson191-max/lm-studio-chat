@@ -55,12 +55,6 @@ export async function GET() {
       take: 50,
     })
 
-    // Messages per user
-    const messagesPerUser = await db.message.groupBy({
-      by: ['conversationId'],
-      select: { conversationId: true },
-    })
-
     // Count messages per user through conversations
     const userMessageCounts: Record<string, number> = {}
     for (const userId of usersWithStats.map((u) => u.id)) {

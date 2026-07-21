@@ -3,9 +3,27 @@ import { hashPassword } from '@/lib/auth'
 import { NextRequest, NextResponse } from 'next/server'
 
 // Check if any accounts exist (for first-run detection)
+// Also runs a one-time migration: if accounts exist but none have the admin
+// role (e.g. created before the admin-panel update), promote the oldest
+// account so existing installs gain an admin automatically.
 export async function GET() {
   try {
     const count = await db.account.count()
+    if (count > 0) {
+      const adminCount = await db.account.count({ where: { role: 'admin' } })
+      if (adminCount === 0) {
+        const oldest = await db.account.findFirst({
+          orderBy: { createdAt: 'asc' },
+          select: { id: true },
+        })
+        if (oldest) {
+          await db.account.update({
+            where: { id: oldest.id },
+            data: { role: 'admin' },
+          })
+        }
+      }
+    }
     return NextResponse.json({ hasAccounts: count > 0 })
   } catch (error) {
     console.error('Setup GET error:', error)
