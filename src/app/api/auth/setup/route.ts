@@ -59,16 +59,19 @@ export async function POST(request: NextRequest) {
       )
     }
 
+    // First account is always admin
     const account = await db.account.create({
       data: {
         username,
         password: hashedPassword,
+        role: 'admin',
       },
     })
 
     return NextResponse.json({
       success: true,
       username: account.username,
+      role: account.role,
     })
   } catch (error) {
     console.error('Setup POST error:', error)

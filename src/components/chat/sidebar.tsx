@@ -4,7 +4,8 @@ import { useChatStore } from '@/store/chat-store'
 import { cn } from '@/lib/utils'
 import {
   Plus, MessageSquare, Trash2, PanelLeftClose, Settings, Cpu,
-  Wifi, WifiOff, LogOut, Search, Layers, Wrench, KeyRound
+  Wifi, WifiOff, LogOut, Search, Layers, Wrench, KeyRound, Shield
+
 } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { ScrollArea } from '@/components/ui/scroll-area'
@@ -19,7 +20,10 @@ interface SidebarProps {
   onLogout: () => void
 }
 
+import { useSession } from 'next-auth/react'
+
 export function Sidebar({ username, onLogout }: SidebarProps) {
+  const isAdmin = useSession()?.data?.user?.role === 'admin'
   const conversations = useChatStore((s) => s.conversations)
   const activeConversationId = useChatStore((s) => s.activeConversationId)
   const sidebarOpen = useChatStore((s) => s.sidebarOpen)
@@ -208,6 +212,16 @@ export function Sidebar({ username, onLogout }: SidebarProps) {
             <KeyRound className="h-3.5 w-3.5" />
             Change Password
           </Button>
+          {isAdmin && (
+            <Button
+              variant="ghost"
+              className="w-full justify-start gap-2 h-8 text-xs text-primary hover:text-primary"
+              onClick={() => window.location.href = '/admin'}
+            >
+              <Shield className="h-3.5 w-3.5" />
+              Admin Panel
+            </Button>
+          )}
           <Button
             variant="ghost"
             className="w-full justify-start gap-2 h-8 text-xs text-destructive hover:text-destructive"
