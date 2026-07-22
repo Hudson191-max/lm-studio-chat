@@ -19,18 +19,32 @@ interface McpDiscoveryResult {
   serverInfo?: { name?: string; version?: string }
 }
 
-/** Parse an SSE-formatted text body and extract the first JSON `data:` payload. */
+/** Parse an SSE-formatted text body and extract the first valid JSON `data:` payload. */
 function parseSseBody(body: string): unknown | null {
-  // SSE format: lines starting with "data: " contain JSON
+  // SSE format: lines starting with "data: " contain JSON.
+  // A single SSE event can span multiple "data:" lines that should be
+  // concatenated before parsing, but Hound (and most MCP servers) put
+  // the entire JSON on a single data: line, so we try each one.
+  const dataLines: string[] = []
   for (const line of body.split('\n')) {
     const trimmed = line.trim()
     if (trimmed.startsWith('data: ')) {
       const jsonStr = trimmed.slice(6)
+      // Try parsing this single line first (most common case)
       try {
         return JSON.parse(jsonStr)
       } catch {
-        // try next line
+        // Could be a multi-line SSE event — collect and try below
+        dataLines.push(jsonStr)
       }
+    }
+  }
+  // Try concatenating all data: lines (multi-line SSE event)
+  if (dataLines.length > 0) {
+    try {
+      return JSON.parse(dataLines.join('\n'))
+    } catch {
+      // fall through
     }
   }
   // Maybe the whole body is just JSON (simple-json protocol)
@@ -122,13 +136,22 @@ export async function discoverMcpTools(url: string, timeoutMs = 15000): Promise<
     })
 
     if (!toolsRes.ok) {
+      const errText = await toolsRes.text().catch(() => '')
+      console.error(`[mcp-client] tools/list failed: HTTP ${toolsRes.status}`, errText.slice(0, 200))
       return { tools: [], protocol: 'streamable-http' }
     }
 
     const toolsBody = await toolsRes.text()
     const toolsParsed = parseSseBody(toolsBody) as
-      | { result?: { tools?: McpTool[] }; error?: unknown }
+      | { result?: { tools?: McpTool[] }; error?: { message?: string } }
       | null
+
+    if (toolsParsed?.error) {
+      console.error('[mcp-client] tools/list returned error:', toolsParsed.error)
+    }
+    if (!toolsParsed) {
+      console.error('[mcp-client] could not parse tools/list response (first 200 chars):', toolsBody.slice(0, 200))
+    }
 
     const tools = toolsParsed?.result?.tools || []
 
