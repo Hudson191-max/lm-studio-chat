@@ -7,6 +7,7 @@ python --version >nul 2>&1
 if errorlevel 1 (
   echo Python 3 is required but not installed.
   echo   Install from https://www.python.org/downloads/
+  echo   Make sure to check "Add Python to PATH" during install!
   exit /b 1
 )
 python --version
@@ -28,9 +29,24 @@ if errorlevel 1 (
 
 echo.
 echo Verifying install...
-hound --version
+echo Looking for hound.exe in common locations...
+where hound 2>nul
+if errorlevel 1 (
+  echo.
+  echo WARNING: 'hound' is not on your PATH. This is common on Windows when
+  echo Python's Scripts directory isn't in PATH. The orchestrator will search
+  echo common install locations automatically, but if it can't find hound:
+  echo.
+  echo   1. Find where pip installed it:
+  echo        python -c "import sysconfig; print(sysconfig.get_path('scripts'))"
+  echo   2. Add that directory to your PATH, OR
+  echo   3. Run hound directly with the full path.
+  echo.
+) else (
+  hound --version
+)
 
 echo.
 echo Done! Hound is installed.
-echo Start it with:  npm run start:hound
-echo It will run at http://127.0.0.1:8765/mcp
+echo Start the full app with:  npm run start:all  (or START.bat)
+echo Hound will run at http://127.0.0.1:8765/mcp

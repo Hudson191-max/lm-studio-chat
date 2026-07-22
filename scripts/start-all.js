@@ -30,6 +30,8 @@
 
 const { spawn, execSync } = require('child_process')
 const http = require('http')
+const fs = require('fs')
+const path = require('path')
 const isWin = process.platform === 'win32'
 
 const MODE = process.argv[2] || 'start' // 'start' or 'dev'
@@ -150,15 +152,80 @@ function killProcessOnPort(port) {
   }
 }
 
+/**
+ * Find the hound executable. On Unix it's usually on PATH.
+ * On Windows, pip installs to Python's Scripts\ directory which may not
+ * be on PATH — so we check common locations:
+ *   - %APPDATA%\Python\Scripts\hound.exe  (per-user pip install)
+ *   - %LOCALAPPDATA%\Programs\Python\PythonXX\Scripts\hound.exe
+ *   - %USERPROFILE%\AppData\Roaming\Python\PythonXX\Scripts\hound.exe
+ *   - C:\PythonXX\Scripts\hound.exe
+ *   - C:\Program Files\PythonXX\Scripts\hound.exe
+ */
+function findHoundExecutable() {
+  // Try PATH first (works on Unix, and Windows if Scripts is on PATH)
+  // We'll let spawn handle this with shell:true on Windows.
+
+  if (!isWin) {
+    return { cmd: 'hound', args: [] }
+  }
+
+  // On Windows, search common install locations for hound.exe
+  const candidates = []
+  const appdata = process.env.APPDATA || ''
+  const localappdata = process.env.LOCALAPPDATA || ''
+  const userprofile = process.env.USERPROFILE || ''
+  const programFiles = process.env.ProgramFiles || 'C:\\Program Files'
+
+  // Per-user pip install (most common with `pip install --user`)
+  if (appdata) {
+    candidates.push(path.join(appdata, 'Python', 'Scripts', 'hound.exe'))
+  }
+  // Roaming profile Python installs
+  if (userprofile) {
+    candidates.push(path.join(userprofile, 'AppData', 'Roaming', 'Python', 'Scripts', 'hound.exe'))
+    for (const ver of ['Python313', 'Python312', 'Python311', 'Python310', 'Python39']) {
+      candidates.push(path.join(userprofile, 'AppData', 'Roaming', 'Python', ver, 'Scripts', 'hound.exe'))
+    }
+  }
+  // Local Programs Python
+  if (localappdata) {
+    for (const ver of ['Python313', 'Python312', 'Python311', 'Python310', 'Python39']) {
+      candidates.push(path.join(localappdata, 'Programs', 'Python', ver, 'Scripts', 'hound.exe'))
+    }
+  }
+  // System-wide Python
+  for (const root of ['C:\\', programFiles]) {
+    for (const ver of ['Python313', 'Python312', 'Python311', 'Python310', 'Python39']) {
+      candidates.push(path.join(root, ver, 'Scripts', 'hound.exe'))
+      candidates.push(path.join(root, 'Python' + ver.replace('Python', ''), 'Scripts', 'hound.exe'))
+    }
+  }
+
+  for (const candidate of candidates) {
+    try {
+      if (fs.existsSync(candidate)) {
+        return { cmd: candidate, args: [] }
+      }
+    } catch {}
+  }
+
+  // Fallback: just use 'hound' and let spawn find it (or fail with a clear error)
+  return { cmd: 'hound', args: [] }
+}
+
 function startHound() {
   if (SKIP_HOUND) {
     console.log('[orchestrator] SKIP_HOUND=1 set, not launching Hound.')
     return null
   }
-  console.log('[orchestrator] Starting Hound MCP...')
-  const proc = spawn('hound', ['--http', '--host', HOUND_HOST, '--port', HOUND_PORT], {
+
+  const { cmd: houndCmd, args: houndArgs } = findHoundExecutable()
+  const houndFullArgs = [...houndArgs, '--http', '--host', HOUND_HOST, '--port', HOUND_PORT]
+  console.log(`[orchestrator] Starting Hound MCP (${houndCmd})...`)
+  const proc = spawn(houndCmd, houndFullArgs, {
     stdio: ['ignore', 'pipe', 'pipe'],
-    shell: isWin,
+    shell: isWin && houndCmd === 'hound',  // only use shell for PATH lookup
     env: { ...process.env },
   })
 
@@ -182,7 +249,9 @@ function startHound() {
 
   proc.on('error', (err) => {
     if (err.code === 'ENOENT') {
-      console.log('[orchestrator] Hound is not installed — skipping. Install with: npm run install:hound')
+      console.log('[orchestrator] Hound is not installed or not on PATH — skipping.')
+      console.log('[orchestrator] Install it with: npm run install:hound')
+      console.log('[orchestrator] Or manually: pip install hound-mcp[all] && playwright install chromium')
     } else {
       console.log(`[orchestrator] Failed to start Hound: ${err.message}`)
     }
