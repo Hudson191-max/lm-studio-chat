@@ -282,32 +282,25 @@ function startHound() {
 }
 
 function startNext() {
-  const args = MODE === 'dev' ? ['next', 'dev', '-p', APP_PORT] : ['next', 'start', '-p', APP_PORT]
+  const nextArgs = MODE === 'dev' ? ['dev', '-p', APP_PORT] : ['start', '-p', APP_PORT]
   console.log(`[orchestrator] Starting Next.js (${MODE}) on port ${APP_PORT}...`)
 
-  // On Windows, npx is npx.cmd (a batch file). spawn() can't execute .cmd
-  // files without shell:true, but shell:true with args triggers DEP0190.
-  // Resolve the full path to npx.cmd first via `where npx`, then spawn
-  // directly without shell. On Unix, npx is a real executable.
-  let npxCmd = 'npx'
-  let useShell = false
-  if (isWin) {
-    try {
-      const out = execSync('where npx.cmd', { encoding: 'utf8', stdio: ['pipe', 'pipe', 'ignore'] }).trim()
-      const first = out.split('\n')[0].trim()
-      if (first && fs.existsSync(first)) {
-        npxCmd = first
-      } else {
-        useShell = true  // fallback to shell
-      }
-    } catch {
-      useShell = true  // fallback to shell
-    }
+  // Invoke the Next.js CLI directly via node, bypassing npx entirely.
+  // This avoids the Windows .cmd spawn issue (EINVAL) and the DEP0190
+  // deprecation warning from shell:true with args.
+  // Path: node_modules/next/dist/bin/next (defined in next's package.json "bin")
+  const nextCliPath = path.join(__dirname, '..', 'node_modules', 'next', 'dist', 'bin', 'next')
+
+  if (!fs.existsSync(nextCliPath)) {
+    console.error(`[orchestrator] Next.js CLI not found at ${nextCliPath}`)
+    console.error('[orchestrator] Run "npm install" first.')
+    shutdown(1)
+    return null
   }
 
-  const proc = spawn(npxCmd, args, {
+  const proc = spawn(process.execPath, [nextCliPath, ...nextArgs], {
     stdio: ['ignore', 'pipe', 'pipe'],
-    shell: useShell,
+    shell: false,  // no shell needed — we're invoking node directly
     env: { ...process.env },
   })
 
