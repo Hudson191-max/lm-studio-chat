@@ -1,5 +1,6 @@
 import { db } from '@/lib/db'
 import { requireAuth } from '@/lib/auth-guard'
+import { discoverMcpTools } from '@/lib/mcp-client'
 import { NextRequest, NextResponse } from 'next/server'
 
 export async function GET() {
@@ -37,26 +38,13 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: 'Name and URL are required' }, { status: 400 })
     }
 
-    // Discover tools from the MCP server
+    // Discover tools from the MCP server (supports both streamable HTTP and legacy)
     let tools: unknown[] = []
     try {
-      const res = await fetch(url, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          jsonrpc: '2.0',
-          id: 1,
-          method: 'tools/list',
-          params: {},
-        }),
-        signal: AbortSignal.timeout(10000),
-      })
-      if (res.ok) {
-        const data = await res.json()
-        tools = data.result?.tools || []
-      }
+      const result = await discoverMcpTools(url)
+      tools = result.tools
     } catch {
-      // Server might not be reachable yet, that's ok
+      // Server might not be reachable yet, that's ok — save with empty tools
     }
 
     const server = await db.mcpServer.create({

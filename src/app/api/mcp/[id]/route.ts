@@ -1,5 +1,6 @@
 import { db } from '@/lib/db'
 import { requireAuth } from '@/lib/auth-guard'
+import { discoverMcpTools } from '@/lib/mcp-client'
 import { NextRequest, NextResponse } from 'next/server'
 
 export async function PATCH(
@@ -55,24 +56,11 @@ export async function POST(
       return NextResponse.json({ error: 'Server not found' }, { status: 404 })
     }
 
-    // Refresh tools
+    // Refresh tools using the shared MCP client (handles streamable HTTP + legacy)
     let tools: unknown[] = []
     try {
-      const res = await fetch(server.url, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          jsonrpc: '2.0',
-          id: 1,
-          method: 'tools/list',
-          params: {},
-        }),
-        signal: AbortSignal.timeout(10000),
-      })
-      if (res.ok) {
-        const data = await res.json()
-        tools = data.result?.tools || []
-      }
+      const result = await discoverMcpTools(server.url)
+      tools = result.tools
     } catch {
       return NextResponse.json({ error: 'Could not reach MCP server' }, { status: 502 })
     }

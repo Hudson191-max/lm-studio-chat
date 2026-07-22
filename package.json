@@ -8,7 +8,9 @@
     "start": "next start -p 3000",
     "db:push": "prisma db push",
     "db:generate": "prisma generate",
-    "db:reset": "prisma db push --force-reset"
+    "db:reset": "prisma db push --force-reset",
+    "start:hound": "node scripts/start-hound.js",
+    "install:hound": "node scripts/install-hound.js"
   },
   "dependencies": {
     "@prisma/client": "^6.0.0",

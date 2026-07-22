@@ -9,7 +9,7 @@ import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { Switch } from '@/components/ui/switch'
-import { Plus, Trash2, Loader2, RefreshCw, Wrench, Plug } from 'lucide-react'
+import { Plus, Trash2, Loader2, RefreshCw, Wrench, Plug, Search } from 'lucide-react'
 
 export function McpDialog() {
   const mcpOpen = useChatStore((s) => s.mcpOpen)
@@ -21,6 +21,7 @@ export function McpDialog() {
   const [url, setUrl] = useState('')
   const [isAdding, setIsAdding] = useState(false)
   const [refreshing, setRefreshing] = useState<string | null>(null)
+  const [addingPreset, setAddingPreset] = useState(false)
 
   const loadServers = async () => {
     try {
@@ -49,6 +50,32 @@ export function McpDialog() {
       setUrl('')
     } catch { /* silent */ } finally {
       setIsAdding(false)
+    }
+  }
+
+  // One-click preset: Hound local web search MCP
+  const addHoundPreset = async () => {
+    if (addingPreset) return
+    setAddingPreset(true)
+    try {
+      const res = await fetch('/api/mcp', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          name: 'Hound Web Search',
+          url: 'http://127.0.0.1:8765/mcp',
+        }),
+      })
+      const server = await res.json()
+      if (!res.ok) {
+        alert(server.error || 'Could not connect to Hound. Make sure it is running (npm run start:hound).')
+        return
+      }
+      setMcpServers([...mcpServers, server])
+    } catch {
+      alert('Could not reach Hound at http://127.0.0.1:8765/mcp. Start it first with: npm run start:hound')
+    } finally {
+      setAddingPreset(false)
     }
   }
 
@@ -95,6 +122,40 @@ export function McpDialog() {
         </DialogHeader>
 
         <div className="space-y-4">
+          {/* Hound preset */}
+          <div className="rounded-lg border border-primary/30 bg-primary/5 p-3 space-y-2">
+            <div className="flex items-center gap-2">
+              <Search className="h-4 w-4 text-primary" />
+              <p className="text-sm font-medium">Hound — Free Web Search</p>
+            </div>
+            <p className="text-xs text-muted-foreground">
+              Local, keyless web search + fetch + crawl + PDF/OCR. Runs alongside the app at <code className="bg-muted px-1 rounded">127.0.0.1:8765/mcp</code>.
+            </p>
+            <div className="flex gap-2">
+              <Button
+                size="sm"
+                variant="outline"
+                onClick={addHoundPreset}
+                disabled={addingPreset}
+                className="flex-1"
+              >
+                {addingPreset ? <Loader2 className="mr-2 h-3.5 w-3.5 animate-spin" /> : <Plus className="mr-2 h-3.5 w-3.5" />}
+                Add to MCP
+              </Button>
+              <a
+                href="https://github.com/dondai1234/master-fetch"
+                target="_blank"
+                rel="noreferrer"
+                className="inline-flex h-8 items-center justify-center rounded-md border px-3 text-xs hover:bg-accent"
+              >
+                Docs
+              </a>
+            </div>
+            <p className="text-[10px] text-muted-foreground">
+              First time? Install: <code className="bg-muted px-1 rounded">npm run install:hound</code> · Run: <code className="bg-muted px-1 rounded">npm run start:hound</code>
+            </p>
+          </div>
+
           {/* Add server */}
           <div className="rounded-lg border p-3 space-y-3">
             <div className="flex items-center gap-2">

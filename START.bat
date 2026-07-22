@@ -51,4 +51,8 @@ echo === Server is running! ===
 echo Open http://localhost:3000 in your browser
 echo Press Ctrl+C to stop the server
 echo.
+echo Want web search? Open a SECOND terminal and run:
+echo   npm run start:hound
+echo Then click "Add to MCP" in the chat app's MCP Tools dialog.
+echo.
 call npx next start -p 3000
