@@ -103,6 +103,11 @@ export function McpDialog() {
   // One-click preset: Hound local web search MCP
   const addHoundPreset = async () => {
     if (addingPreset) return
+    // Bail out early if Hound is already in the list
+    if (mcpServers.some((s) => s.url === HOUND_URL)) {
+      alert('Hound is already in your MCP server list.')
+      return
+    }
     setAddingPreset(true)
     try {
       // Probe first for instant feedback
@@ -117,12 +122,12 @@ export function McpDialog() {
       })
       const server = await res.json()
       if (!res.ok) {
-        alert(server.error || 'Could not connect to Hound. Make sure it is running (npm run start:all or START.bat).')
+        alert(server.error || 'Could not add Hound. See the server console for details.')
         return
       }
       setMcpServers([...mcpServers, server])
-    } catch {
-      alert('Could not reach Hound at ' + HOUND_URL + '. Start it first with: npm run start:all (or START.bat on Windows)')
+    } catch (err) {
+      alert('Network error: ' + (err instanceof Error ? err.message : 'Could not reach the server'))
     } finally {
       setAddingPreset(false)
     }

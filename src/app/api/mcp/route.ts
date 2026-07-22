@@ -77,7 +77,19 @@ export async function POST(request: NextRequest) {
       tools,
       warning: discoveryError || undefined,
     })
-  } catch {
-    return NextResponse.json({ error: 'Failed to add MCP server' }, { status: 500 })
+  } catch (err) {
+    // Surface the real error so the user can diagnose (was previously swallowed)
+    const detail = err instanceof Error ? err.message : String(err)
+    let hint = ''
+    if (detail.includes('does not exist') || detail.includes('relation') || detail.includes('column')) {
+      hint = ' Database schema may be out of date. Run: npx prisma db push'
+    } else if (detail.includes('Unique constraint') || detail.includes('P2002')) {
+      hint = ' An MCP server with this URL already exists.'
+    }
+    console.error('MCP POST error:', detail)
+    return NextResponse.json(
+      { error: `Failed to add MCP server: ${detail}${hint}` },
+      { status: 500 }
+    )
   }
 }
