@@ -44,6 +44,8 @@ export function ChatInput() {
   const selectedModel = useChatStore((s) => s.selectedModel)
   const currentSystemPrompt = useChatStore((s) => s.currentSystemPrompt)
   const mcpServers = useChatStore((s) => s.mcpServers)
+  const lastTokenUsage = useChatStore((s) => s.lastTokenUsage)
+  const modelContextLengths = useChatStore((s) => s.modelContextLengths)
 
   const addMessage = useChatStore((s) => s.addMessage)
   const setStreamingContent = useChatStore((s) => s.setStreamingContent)
@@ -303,6 +305,9 @@ export function ChatInput() {
             if (parsed.error) {
               setConnectionError(parsed.error)
             }
+            if (parsed.tokenUsage) {
+              useChatStore.getState().setLastTokenUsage(parsed.tokenUsage)
+            }
           } catch { /* skip */ }
         }
       }
@@ -531,9 +536,21 @@ export function ChatInput() {
               {useChatStore.getState().mcpServers.filter((s) => s.enabled).length} MCP tool(s) active
             </span>
           </div>
-          <p className="text-xs text-muted-foreground">
-            Connected to your local LM Studio server
-          </p>
+          <div className="flex items-center gap-3 text-xs text-muted-foreground">
+            {(() => {
+              const ctxLen = modelContextLengths[selectedModel]
+              if (!lastTokenUsage || !ctxLen) return null
+              const pct = Math.min(100, (lastTokenUsage.promptTokens / ctxLen) * 100)
+              const color = pct > 80 ? 'text-red-500' : pct > 50 ? 'text-yellow-500' : 'text-emerald-500'
+              const fmt = (n: number) => n >= 1000 ? `${(n / 1000).toFixed(1)}k` : String(n)
+              return (
+                <span className={`font-medium ${color}`} title={`Prompt: ${lastTokenUsage.promptTokens} / Completion: ${lastTokenUsage.completionTokens} / Context: ${ctxLen}`}>
+                  {fmt(lastTokenUsage.promptTokens)}/{fmt(ctxLen)} ctx ({pct.toFixed(0)}%)
+                </span>
+              )
+            })()}
+            <p>Connected to your local LM Studio server</p>
+          </div>
         </div>
       </div>
     </div>

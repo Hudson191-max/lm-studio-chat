@@ -70,8 +70,16 @@ interface ChatState {
   // Connection
   isConnected: boolean
   availableModels: string[]
+  modelContextLengths: Record<string, number>  // modelId → context window size
   selectedModel: string
   connectionError: string | null
+
+  // Token usage (from last LM Studio response)
+  lastTokenUsage: {
+    promptTokens: number
+    completionTokens: number
+    totalTokens: number
+  } | null
 
   // UI
   sidebarOpen: boolean
@@ -114,8 +122,12 @@ interface ChatState {
   // Actions - Connection
   setConnected: (connected: boolean) => void
   setAvailableModels: (models: string[]) => void
+  setModelContextLengths: (lengths: Record<string, number>) => void
   setSelectedModel: (model: string) => void
   setConnectionError: (error: string | null) => void
+
+  // Actions - Token usage
+  setLastTokenUsage: (usage: { promptTokens: number; completionTokens: number; totalTokens: number } | null) => void
 
   // Actions - UI
   setSidebarOpen: (open: boolean) => void
@@ -152,8 +164,10 @@ export const useChatStore = create<ChatState>((set) => ({
 
   isConnected: false,
   availableModels: [],
+  modelContextLengths: {},
   selectedModel: '',
   connectionError: null,
+  lastTokenUsage: null,
 
   sidebarOpen: true,
   settingsOpen: false,
@@ -216,8 +230,10 @@ export const useChatStore = create<ChatState>((set) => ({
 
   setConnected: (connected) => set({ isConnected: connected }),
   setAvailableModels: (models) => set({ availableModels: models }),
+  setModelContextLengths: (lengths) => set({ modelContextLengths: lengths }),
   setSelectedModel: (model) => set({ selectedModel: model }),
   setConnectionError: (error) => set({ connectionError: error }),
+  setLastTokenUsage: (usage) => set({ lastTokenUsage: usage }),
 
   setSidebarOpen: (open) => set({ sidebarOpen: open }),
   setSettingsOpen: (open) => set({ settingsOpen: open }),

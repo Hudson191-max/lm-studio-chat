@@ -72,6 +72,12 @@ export function SettingsDialog() {
       const models: ModelInfo[] = data.models || []
       setAvailableModels(models.map((m) => m.id))
       setModelDetails(models)
+      // Populate context lengths map for token usage display
+      const ctxMap: Record<string, number> = {}
+      for (const m of models) {
+        if (m.contextLength) ctxMap[m.id] = m.contextLength
+      }
+      useChatStore.getState().setModelContextLengths(ctxMap)
       if (models.length > 0 && !selectedModel) {
         setSelectedModel(models[0].id)
       }

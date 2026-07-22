@@ -274,8 +274,25 @@ export async function POST(request: NextRequest) {
                         }>
                       }
                     }>
+                    usage?: {
+                      prompt_tokens?: number
+                      completion_tokens?: number
+                      total_tokens?: number
+                    }
                   }
                   const delta = parsed.choices?.[0]?.delta
+
+                  // Capture token usage (LM Studio sends it in the last chunk)
+                  if (parsed.usage) {
+                    const usage = {
+                      promptTokens: parsed.usage.prompt_tokens || 0,
+                      completionTokens: parsed.usage.completion_tokens || 0,
+                      totalTokens: parsed.usage.total_tokens || 0,
+                    }
+                    streamController.enqueue(
+                      encoder.encode(`data: ${JSON.stringify({ tokenUsage: usage })}\n\n`)
+                    )
+                  }
                   const reasoning = delta?.reasoning_content
                   if (reasoning) {
                     roundThinking += reasoning
