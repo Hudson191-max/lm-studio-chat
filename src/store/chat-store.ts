@@ -1,11 +1,19 @@
 import { create } from 'zustand'
 
+export interface AttachedFile {
+  name: string
+  ext: string
+  chars: number
+  truncated?: boolean
+}
+
 export interface Message {
   id: string
   role: 'user' | 'assistant' | 'system' | 'tool'
   content: string
   thinking?: string
   images?: string[]
+  files?: AttachedFile[]
   toolCalls?: unknown[]
   editedAt?: string
   createdAt?: string

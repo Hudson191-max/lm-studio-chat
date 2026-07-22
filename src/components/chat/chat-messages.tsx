@@ -2,14 +2,10 @@
 
 import { useEffect, useRef, useCallback, useState } from 'react'
 import { useChatStore } from '@/store/chat-store'
-import { Bot, User, Loader2, RefreshCw, Pencil, Check, X, Wrench, Brain, ChevronDown, ChevronRight, Image as ImageIcon } from 'lucide-react'
-import ReactMarkdown from 'react-markdown'
-import remarkMath from 'remark-math'
-import rehypeKatex from 'rehype-katex'
-import rehypeHighlight from 'rehype-highlight'
+import { Bot, User, Loader2, RefreshCw, Pencil, Check, X, Wrench, Brain, ChevronDown, ChevronRight, Image as ImageIcon, FileText } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Textarea } from '@/components/ui/textarea'
-import { CodeBlock } from '@/components/chat/code-block'
+import { MarkdownContent } from '@/components/chat/markdown-content'
 
 export function ChatMessages() {
   const messages = useChatStore((s) => s.messages)
@@ -158,10 +154,10 @@ function ThinkingBlock({ thinking, isStreaming }: { thinking: string; isStreamin
         </span>
       </button>
       {expanded && (
-        <div className="rounded-lg border border-border/50 bg-muted/30 p-3 text-xs text-muted-foreground leading-relaxed max-h-80 overflow-y-auto"
+        <div className="rounded-lg border border-border/50 bg-muted/30 p-3 text-xs text-muted-foreground leading-relaxed max-h-80 overflow-y-auto prose prose-sm dark:prose-invert max-w-none"
           style={{ scrollbarWidth: 'thin', scrollbarColor: 'var(--border) transparent' }}
         >
-          <p className="whitespace-pre-wrap">{thinking}</p>
+          <MarkdownContent compact>{thinking}</MarkdownContent>
         </div>
       )}
     </div>
@@ -180,7 +176,7 @@ function MessageBubble({
   onCancelEdit,
   onRegenerate,
 }: {
-  message: { id: string; role: string; content: string; thinking?: string; images?: string[]; toolCalls?: unknown[]; editedAt?: string }
+  message: { id: string; role: string; content: string; thinking?: string; images?: string[]; files?: Array<{ name: string; ext: string; chars: number; truncated?: boolean }>; toolCalls?: unknown[]; editedAt?: string }
   isLast?: boolean
   isStreaming?: boolean
   onEdit?: () => void
@@ -193,6 +189,7 @@ function MessageBubble({
 }) {
   const isUser = message.role === 'user'
   const hasImages = message.images && message.images.length > 0
+  const hasFiles = message.files && message.files.length > 0
   const hasThinking = !!message.thinking
 
   if (isEditing && onEditContentChange) {
@@ -251,6 +248,23 @@ function MessageBubble({
                   ))}
                 </div>
               )}
+              {hasFiles && (
+                <div className="mb-2 flex flex-wrap gap-1.5">
+                  {(message.files || []).map((f, idx) => (
+                    <div
+                      key={idx}
+                      className="flex items-center gap-1.5 rounded-md bg-background/20 px-2 py-1 text-[11px]"
+                      title={`${f.chars.toLocaleString()} characters${f.truncated ? ' (truncated)' : ''}`}
+                    >
+                      <FileText className="h-3 w-3" />
+                      <span className="font-medium">{f.name}</span>
+                      <span className="opacity-70">
+                        {f.ext.replace('.', '').toUpperCase()}{f.truncated ? ' · truncated' : ''}
+                      </span>
+                    </div>
+                  ))}
+                </div>
+              )}
               <p className="whitespace-pre-wrap">{message.content}</p>
               {message.editedAt && (
                 <p className="mt-1 text-[10px] opacity-60">edited</p>
@@ -264,50 +278,7 @@ function MessageBubble({
               )}
               {/* Main content */}
               <div className="prose prose-sm dark:prose-invert max-w-none">
-                <ReactMarkdown
-                  remarkPlugins={[remarkMath]}
-                  rehypePlugins={[
-                    rehypeKatex,
-                    [rehypeHighlight, { detect: true, ignoreMissing: true }],
-                  ]}
-                  components={{
-                    // Wrap fenced code blocks with our CodeBlock (copy button + dark surface)
-                    pre({ children, ...props }) {
-                      // children is the <code> element produced by react-markdown.
-                      // Pull its className through to CodeBlock so it can detect language.
-                      const codeEl = children as React.ReactElement<{ className?: string }> | undefined
-                      const codeClassName =
-                        codeEl && typeof codeEl === 'object' && 'props' in codeEl
-                          ? codeEl.props.className
-                          : undefined
-                      return (
-                        <CodeBlock className={codeClassName}>{children}</CodeBlock>
-                      )
-                    },
-                    // Inline code: keep simple, just style it
-                    code({ className, children, ...rest }) {
-                      // If the code has a language-* class, it's a fenced block — let <pre> handle it
-                      const isBlock = /language-/.test(className || '')
-                      if (isBlock) {
-                        return (
-                          <code className={className} {...rest}>
-                            {children}
-                          </code>
-                        )
-                      }
-                      return (
-                        <code
-                          className="rounded bg-muted px-1.5 py-0.5 font-mono text-[0.85em]"
-                          {...rest}
-                        >
-                          {children}
-                        </code>
-                      )
-                    },
-                  }}
-                >
-                  {message.content}
-                </ReactMarkdown>
+                <MarkdownContent>{message.content}</MarkdownContent>
                 {isStreaming && !message.thinking && (
                   <span className="ml-0.5 inline-block h-4 w-1.5 animate-pulse rounded-sm bg-current opacity-70" />
                 )}

@@ -1,8 +1,8 @@
 'use client'
 
 import { useState, useRef, useCallback, useEffect, KeyboardEvent, ClipboardEvent, DragEvent } from 'react'
-import { useChatStore } from '@/store/chat-store'
-import { SendHorizontal, Square, Download, Sparkles, ImagePlus, X } from 'lucide-react'
+import { useChatStore, AttachedFile } from '@/store/chat-store'
+import { SendHorizontal, Square, Download, Sparkles, ImagePlus, X, FileText, Loader2 } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Textarea } from '@/components/ui/textarea'
 
@@ -15,9 +15,24 @@ function fileToBase64(file: File): Promise<string> {
   })
 }
 
+interface PendingFile extends AttachedFile {
+  text: string
+  uploading?: boolean
+  error?: string
+}
+
+// Extensions accepted for document upload
+const DOC_EXTENSIONS = ['.pdf', '.txt', '.md', '.markdown', '.csv', '.docx']
+
+function getExt(name: string): string {
+  const i = name.lastIndexOf('.')
+  return i >= 0 ? name.slice(i).toLowerCase() : ''
+}
+
 export function ChatInput() {
   const [input, setInput] = useState('')
   const [images, setImages] = useState<string[]>([])
+  const [pendingFiles, setPendingFiles] = useState<PendingFile[]>([])
   const textareaRef = useRef<HTMLTextAreaElement>(null)
   const abortControllerRef = useRef<AbortController | null>(null)
   const dropRef = useRef<HTMLDivElement>(null)
@@ -78,19 +93,78 @@ export function ChatInput() {
     e.stopPropagation()
     const files = Array.from(e.dataTransfer?.files || [])
     const imageFiles = files.filter((f) => f.type.startsWith('image/'))
-    if (imageFiles.length === 0) return
-    const base64List = await Promise.all(imageFiles.map(fileToBase64))
-    setImages((prev) => [...prev, ...base64List])
+    const docFiles = files.filter((f) => DOC_EXTENSIONS.includes(getExt(f.name)))
+    if (imageFiles.length === 0 && docFiles.length === 0) return
+    if (imageFiles.length > 0) {
+      const base64List = await Promise.all(imageFiles.map(fileToBase64))
+      setImages((prev) => [...prev, ...base64List])
+    }
+    for (const f of docFiles) {
+      uploadDocument(f)
+    }
   }, [])
 
   const removeImage = useCallback((index: number) => {
     setImages((prev) => prev.filter((_, i) => i !== index))
   }, [])
 
+  const removeFile = useCallback((index: number) => {
+    setPendingFiles((prev) => prev.filter((_, i) => i !== index))
+  }, [])
+
+  // Upload a document to /api/upload for text extraction
+  const uploadDocument = useCallback(async (file: File) => {
+    const placeholder: PendingFile = {
+      name: file.name,
+      ext: getExt(file.name),
+      chars: 0,
+      text: '',
+      uploading: true,
+    }
+    setPendingFiles((prev) => [...prev, placeholder])
+    const idx = -1 // we'll match by reference below
+    try {
+      const fd = new FormData()
+      fd.append('file', file)
+      const res = await fetch('/api/upload', { method: 'POST', body: fd })
+      const data = await res.json()
+      if (!res.ok) {
+        throw new Error(data.error || `HTTP ${res.status}`)
+      }
+      setPendingFiles((prev) =>
+        prev.map((p, i) =>
+          p === placeholder || (i === prev.length - 1 && p.name === placeholder.name && p.uploading)
+            ? {
+                name: data.name,
+                ext: data.ext,
+                chars: data.chars,
+                truncated: data.truncated,
+                text: data.text,
+                uploading: false,
+              }
+            : p
+        )
+      )
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : 'Upload failed'
+      setPendingFiles((prev) =>
+        prev.map((p) =>
+          p === placeholder || (p.name === placeholder.name && p.uploading)
+            ? { ...p, uploading: false, error: msg }
+            : p
+        )
+      )
+    }
+    void idx
+  }, [])
+
   const sendMessage = useCallback(async (overrideMessages?: typeof messages) => {
     const msgs = overrideMessages || messages
     const trimmed = input.trim()
-    if ((!trimmed && images.length === 0 && !overrideMessages) || isStreaming) return
+    const hasUploadingFiles = pendingFiles.some((f) => f.uploading)
+    const hasErroredFiles = pendingFiles.some((f) => f.error)
+    if (hasUploadingFiles || hasErroredFiles) return
+    if ((!trimmed && images.length === 0 && pendingFiles.length === 0 && !overrideMessages) || isStreaming) return
 
     let conversationId = activeConversationId
 
@@ -108,12 +182,33 @@ export function ChatInput() {
     }
 
     const currentImages = images.length > 0 ? [...images] : undefined
+    const currentFiles = pendingFiles.length > 0 ? pendingFiles.map(({ name, ext, chars, truncated }) => ({ name, ext, chars, truncated })) : undefined
+
+    // Build the full content sent to the AI: user's text + appended doc text
+    // The doc text is wrapped in clear markers so the model knows the source.
+    let fullContent = trimmed
+    if (!overrideMessages && pendingFiles.length > 0) {
+      const docBlocks = pendingFiles.map((f) => {
+        const header = `[Attached document: ${f.name}${f.truncated ? ' (truncated)' : ''}]`
+        return `${header}\n\n${f.text}\n\n[End of document: ${f.name}]`
+      })
+      fullContent = `${trimmed}${trimmed ? '\n\n---\n\n' : ''}${docBlocks.join('\n\n---\n\n')}`
+    }
 
     if (!overrideMessages) {
       const userMsgId = `msg-${Date.now()}-user`
-      addMessage({ id: userMsgId, role: 'user', content: trimmed, images: currentImages })
+      // Store the original user-typed text (not the expanded doc text) for display,
+      // but the API will receive the full content with doc text appended.
+      addMessage({
+        id: userMsgId,
+        role: 'user',
+        content: trimmed || (pendingFiles.length > 0 ? `[Attached: ${pendingFiles.map((f) => f.name).join(', ')}]` : ''),
+        images: currentImages,
+        files: currentFiles,
+      })
       setInput('')
       setImages([])
+      setPendingFiles([])
     }
 
     setIsStreaming(true)
@@ -123,14 +218,14 @@ export function ChatInput() {
 
     if (textareaRef.current) textareaRef.current.style.height = 'auto'
 
-    // Build messages array - include images for user messages
-    const apiMessages = (overrideMessages || messages).map((m) => ({
+    // Build messages array - include images + expanded content for user messages
+    const apiMessages: Array<{ role: string; content: string; images?: string[]; files?: Array<{ name: string; ext: string; chars: number; truncated?: boolean }> }> = (overrideMessages || messages).map((m) => ({
       role: m.role,
       content: m.content,
       images: m.images,
     }))
     if (!overrideMessages) {
-      apiMessages.push({ role: 'user' as const, content: trimmed, images: currentImages })
+      apiMessages.push({ role: 'user' as const, content: fullContent, images: currentImages, files: currentFiles })
     }
 
     abortControllerRef.current = new AbortController()
@@ -226,7 +321,7 @@ export function ChatInput() {
       useChatStore.getState().setStreamingThinking('')
       abortControllerRef.current = null
     }
-  }, [input, images, isStreaming, activeConversationId, selectedModel, messages, currentSystemPrompt, mcpServers, addMessage, setStreamingContent, appendStreamingContent, appendStreamingThinking, setIsStreaming, setConnected, setConnectionError, getMcpTools])
+  }, [input, images, pendingFiles, isStreaming, activeConversationId, selectedModel, messages, currentSystemPrompt, mcpServers, addMessage, setStreamingContent, appendStreamingContent, appendStreamingThinking, setIsStreaming, setConnected, setConnectionError, getMcpTools])
 
   // Listen for regenerate events
   useEffect(() => {
@@ -274,6 +369,20 @@ export function ChatInput() {
     fileInput.click()
   }
 
+  const handleDocUpload = () => {
+    const fileInput = document.createElement('input')
+    fileInput.type = 'file'
+    fileInput.accept = DOC_EXTENSIONS.join(',')
+    fileInput.multiple = true
+    fileInput.onchange = async (e) => {
+      const files = Array.from((e.target as HTMLInputElement).files || [])
+      for (const f of files) {
+        uploadDocument(f)
+      }
+    }
+    fileInput.click()
+  }
+
   return (
     <div className="border-t bg-background px-4 py-3">
       <div className="mx-auto max-w-3xl">
@@ -290,6 +399,43 @@ export function ChatInput() {
                 >
                   <X className="h-2.5 w-2.5" />
                 </button>
+              </div>
+            ))}
+          </div>
+        )}
+
+        {/* Document file chips */}
+        {pendingFiles.length > 0 && (
+          <div className="mb-2 flex flex-wrap gap-2">
+            {pendingFiles.map((f, idx) => (
+              <div
+                key={idx}
+                className={`group flex items-center gap-2 rounded-lg border px-3 py-1.5 text-xs ${
+                  f.error ? 'border-destructive/40 bg-destructive/5' : 'border-border bg-muted/40'
+                }`}
+              >
+                <FileText className={`h-3.5 w-3.5 shrink-0 ${f.error ? 'text-destructive' : 'text-primary'}`} />
+                <div className="flex flex-col">
+                  <span className="font-medium truncate max-w-[180px]" title={f.name}>{f.name}</span>
+                  <span className="text-[10px] text-muted-foreground">
+                    {f.uploading
+                      ? 'Extracting text...'
+                      : f.error
+                      ? f.error
+                      : `${f.ext.replace('.', '').toUpperCase()} · ${f.chars.toLocaleString()} chars${f.truncated ? ' · truncated' : ''}`}
+                  </span>
+                </div>
+                {f.uploading ? (
+                  <Loader2 className="h-3 w-3 animate-spin text-muted-foreground" />
+                ) : (
+                  <button
+                    onClick={() => removeFile(idx)}
+                    className="ml-1 flex h-4 w-4 items-center justify-center rounded-full text-muted-foreground hover:bg-foreground/10 hover:text-foreground"
+                    title="Remove"
+                  >
+                    <X className="h-3 w-3" />
+                  </button>
+                )}
               </div>
             ))}
           </div>
@@ -321,13 +467,22 @@ export function ChatInput() {
           >
             <ImagePlus className="h-4 w-4" />
           </Button>
+          <Button
+            variant="ghost"
+            size="icon"
+            className="h-9 w-9 shrink-0 rounded-lg"
+            onClick={handleDocUpload}
+            title="Attach document (PDF, DOCX, TXT, MD, CSV)"
+          >
+            <FileText className="h-4 w-4" />
+          </Button>
           <Textarea
             ref={textareaRef}
             value={input}
             onChange={handleInput}
             onKeyDown={handleKeyDown}
             onPaste={handlePaste}
-            placeholder="Type your message... (paste or drag images for vision)"
+            placeholder="Type your message... (drag images or documents to attach)"
             className="min-h-[40px] max-h-[200px] flex-1 resize-none border-0 bg-transparent p-2 text-sm shadow-none focus-visible:ring-0"
             rows={1}
             disabled={isStreaming}
@@ -346,7 +501,7 @@ export function ChatInput() {
               size="icon"
               className="h-9 w-9 shrink-0 rounded-lg"
               onClick={() => sendMessage()}
-              disabled={!input.trim() && images.length === 0}
+              disabled={!input.trim() && images.length === 0 && pendingFiles.length === 0}
             >
               <SendHorizontal className="h-4 w-4" />
             </Button>

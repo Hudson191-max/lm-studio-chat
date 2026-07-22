@@ -13,6 +13,7 @@ interface IncomingMessage {
   role: string
   content: string
   images?: string[]
+  files?: Array<{ name: string; ext: string; chars: number; truncated?: boolean }>
   tool_calls?: unknown[]
   tool_call_id?: string
 }
@@ -142,11 +143,17 @@ export async function POST(request: NextRequest) {
     if (conversationId && !regenerate) {
       const lastUserMsg = messages[messages.length - 1]
       if (lastUserMsg && lastUserMsg.role === 'user') {
+        // Store images AND files metadata in the `images` JSON column as a unified object.
+        // The parser in sidebar.tsx handles both legacy array format and new object format.
+        const attachmentData = JSON.stringify({
+          images: lastUserMsg.images || [],
+          files: lastUserMsg.files || [],
+        })
         await db.message.create({
           data: {
             role: 'user',
             content: lastUserMsg.content || '',
-            images: JSON.stringify(lastUserMsg.images || []),
+            images: attachmentData,
             conversationId,
           },
         })
