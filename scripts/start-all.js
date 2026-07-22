@@ -198,12 +198,13 @@ function startHound() {
 }
 
 function startNext() {
-  const cmd = isWin ? 'npx.cmd' : 'npx'
   const args = MODE === 'dev' ? ['next', 'dev', '-p', APP_PORT] : ['next', 'start', '-p', APP_PORT]
   console.log(`[orchestrator] Starting Next.js (${MODE}) on port ${APP_PORT}...`)
-  const proc = spawn(cmd, args, {
+  // On Windows, npx is npx.cmd (a batch file) — spawn() can't execute .cmd
+  // files without shell:true. On Unix, npx is a real executable shebang script.
+  const proc = spawn('npx', args, {
     stdio: ['ignore', 'pipe', 'pipe'],
-    shell: false,
+    shell: isWin,  // required on Windows to find and execute npx.cmd
     env: { ...process.env },
   })
 
@@ -212,6 +213,9 @@ function startNext() {
 
   proc.on('error', (err) => {
     console.error(`[orchestrator] Failed to start Next.js: ${err.message}`)
+    if (isWin && err.code === 'EINVAL') {
+      console.error('[orchestrator] This is a Windows spawn issue. Try running "npx next start -p 3000" directly to verify npm/npx works.')
+    }
     shutdown(1)
   })
 
