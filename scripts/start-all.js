@@ -2,11 +2,19 @@
 /**
  * Orchestrator: starts Hound MCP (if installed) and the Next.js app together.
  *
- * - Spawns Hound in the background (port 8765 by default).
+ * - Probes port 8765 first; if something is already listening (e.g. a
+ *   leftover Hound process from a previous run, or another tool that
+ *   installed Hound), it uses that one instead of spawning a duplicate.
+ * - Spawns Hound in the background (port 8765 by default) only if not
+ *   already running.
  * - Spawns Next.js in the foreground.
  * - Forwards stdout/stderr from both, with [hound] / [next] prefixes.
- * - On Ctrl+C, or if either process exits, kills the other cleanly.
- * - If Hound is not installed, prints a hint and continues with Next.js only.
+ * - On Ctrl+C: kills only the Hound process *we* spawned. If Hound was
+ *   already running before us, we leave it alone (so we don't kill a
+ *   process the user started independently).
+ * - If either process exits, kills the other cleanly.
+ * - If Hound is not installed and not already running, continues with
+ *   Next.js only.
  *
  * Usage:
  *   node scripts/start-all.js              # production (next start -p 3000)
@@ -20,7 +28,8 @@
  *   SKIP_HOUND=1 — skip launching Hound even if installed
  */
 
-const { spawn } = require('child_process')
+const { spawn, execSync } = require('child_process')
+const http = require('http')
 const isWin = process.platform === 'win32'
 
 const MODE = process.argv[2] || 'start' // 'start' or 'dev'
@@ -31,6 +40,7 @@ const SKIP_HOUND = process.env.SKIP_HOUND === '1'
 
 let houndProc = null
 let nextProc = null
+let weStartedHound = false
 let shuttingDown = false
 
 function prefix(name, chunk) {
@@ -38,6 +48,72 @@ function prefix(name, chunk) {
   for (const line of text.split('\n')) {
     if (line === '') continue
     process.stdout.write(`[${name}] ${line}\n`)
+  }
+}
+
+/** Probe an HTTP endpoint, returns true if it responds. */
+function probePort(host, port, path = '/mcp') {
+  return new Promise((resolve) => {
+    const req = http.request(
+      {
+        host,
+        port,
+        path,
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'Content-Length': '2' },
+        timeout: 2000,
+      },
+      (res) => {
+        res.resume()
+        resolve(res.statusCode !== undefined)
+      }
+    )
+    req.on('error', () => resolve(false))
+    req.on('timeout', () => {
+      req.destroy()
+      resolve(false)
+    })
+    req.write('{}')
+    req.end()
+  })
+}
+
+/** Try to find and kill any process listening on a given port. */
+function killProcessOnPort(port) {
+  try {
+    if (isWin) {
+      // netstat -ano | findstr :8765 → last column is PID
+      const out = execSync(`netstat -ano | findstr :${port}`, { encoding: 'utf8' })
+      const pids = new Set()
+      for (const line of out.split('\n')) {
+        const parts = line.trim().split(/\s+/)
+        if (parts.length >= 5 && parts[1].endsWith(`:${port}`)) {
+          pids.add(parts[4])
+        }
+      }
+      for (const pid of pids) {
+        if (pid && pid !== '0') {
+          try {
+            execSync(`taskkill /F /PID ${pid}`, { stdio: 'ignore' })
+            console.log(`[orchestrator] Killed PID ${pid} on port ${port}`)
+          } catch {}
+        }
+      }
+      return pids.size
+    } else {
+      // lsof -ti :8765 → list PIDs
+      const out = execSync(`lsof -ti :${port} 2>/dev/null`, { encoding: 'utf8' })
+      const pids = out.split('\n').map((s) => s.trim()).filter(Boolean)
+      for (const pid of pids) {
+        try {
+          process.kill(parseInt(pid, 10), 'SIGTERM')
+          console.log(`[orchestrator] Killed PID ${pid} on port ${port}`)
+        } catch {}
+      }
+      return pids.length
+    }
+  } catch {
+    return 0
   }
 }
 
@@ -121,8 +197,13 @@ function shutdown(exitCode) {
   shuttingDown = true
   console.log('[orchestrator] Shutting down...')
 
-  if (houndProc && !houndProc.killed) {
+  // Only kill Hound if we started it. If it was already running before us,
+  // leave it alone — the user may have started it independently.
+  if (weStartedHound && houndProc && !houndProc.killed) {
+    console.log('[orchestrator] Stopping Hound (we started it)...')
     try { houndProc.kill(isWin ? 'SIGTERM' : 'SIGINT') } catch {}
+  } else if (houndProc && !weStartedHound) {
+    console.log('[orchestrator] Leaving Hound running (we did not start it).')
   }
   if (nextProc && !nextProc.killed) {
     try { nextProc.kill(isWin ? 'SIGTERM' : 'SIGINT') } catch {}
@@ -130,7 +211,7 @@ function shutdown(exitCode) {
 
   // Give them a moment, then force kill if still alive
   setTimeout(() => {
-    if (houndProc && !houndProc.killed) {
+    if (weStartedHound && houndProc && !houndProc.killed) {
       try { houndProc.kill('SIGKILL') } catch {}
     }
     if (nextProc && !nextProc.killed) {
@@ -144,14 +225,44 @@ function shutdown(exitCode) {
 process.on('SIGINT', () => shutdown(0))
 process.on('SIGTERM', () => shutdown(0))
 
+// Parse --kill-hound flag: find and kill whatever is on port 8765, then exit.
+if (process.argv.includes('--kill-hound')) {
+  console.log(`[orchestrator] Killing any process on port ${HOUND_PORT}...`)
+  const count = killProcessOnPort(HOUND_PORT)
+  if (count > 0) {
+    console.log(`[orchestrator] Killed ${count} process(es).`)
+  } else {
+    console.log(`[orchestrator] No process found on port ${HOUND_PORT}.`)
+  }
+  process.exit(0)
+}
+
 // Start both
 console.log('══════════════════════════════════════════════════════════════════')
 console.log('  LM Studio Chat — starting (with Hound MCP if available)')
 console.log('══════════════════════════════════════════════════════════════════')
 console.log('')
 
-houndProc = startHound()
-// Small delay so Hound logs come before Next.js logs
-setTimeout(() => {
-  nextProc = startNext()
-}, 500)
+;(async () => {
+  // First, probe the Hound port. If something is already listening, use it
+  // instead of spawning a duplicate.
+  if (!SKIP_HOUND) {
+    console.log(`[orchestrator] Checking if Hound is already running on port ${HOUND_PORT}...`)
+    const alreadyRunning = await probePort(HOUND_HOST, HOUND_PORT)
+    if (alreadyRunning) {
+      console.log(`[orchestrator] Hound is already running at http://${HOUND_HOST}:${HOUND_PORT}/mcp — using it.`)
+      console.log('[orchestrator] (We did not start it, so Ctrl+C will NOT stop it.)')
+      weStartedHound = false
+    } else {
+      houndProc = startHound()
+      weStartedHound = !!houndProc
+    }
+  } else {
+    console.log('[orchestrator] SKIP_HOUND=1 — not launching Hound.')
+  }
+
+  // Small delay so Hound logs come before Next.js logs
+  setTimeout(() => {
+    nextProc = startNext()
+  }, 500)
+})()

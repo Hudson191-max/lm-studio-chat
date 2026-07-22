@@ -27,6 +27,7 @@ export function McpDialog() {
   const [addingPreset, setAddingPreset] = useState(false)
   const [houndStatus, setHoundStatus] = useState<HoundStatus>('checking')
   const [houndAlreadyAdded, setHoundAlreadyAdded] = useState(false)
+  const [stoppingHound, setStoppingHound] = useState(false)
 
   const probeHound = async () => {
     setHoundStatus('checking')
@@ -36,6 +37,28 @@ export function McpDialog() {
       setHoundStatus(data.reachable ? 'running' : 'not-running')
     } catch {
       setHoundStatus('not-running')
+    }
+  }
+
+  const stopHound = async () => {
+    if (stoppingHound) return
+    if (!confirm('Stop Hound MCP? This will kill any process on port 8765. The chat app will keep running.')) return
+    setStoppingHound(true)
+    try {
+      const res = await fetch('/api/mcp/stop-hound', { method: 'POST' })
+      const data = await res.json()
+      if (!res.ok) {
+        alert(data.error || 'Failed to stop Hound')
+        return
+      }
+      // Wait a moment for the port to be released, then re-probe
+      setTimeout(() => {
+        probeHound()
+        setStoppingHound(false)
+      }, 1000)
+    } catch {
+      setStoppingHound(false)
+      alert('Failed to stop Hound')
     }
   }
 
@@ -195,6 +218,18 @@ export function McpDialog() {
                 >
                   {addingPreset ? <Loader2 className="mr-2 h-3.5 w-3.5 animate-spin" /> : <Plus className="mr-2 h-3.5 w-3.5" />}
                   Add to MCP
+                </Button>
+              )}
+              {houndStatus === 'running' && (
+                <Button
+                  size="sm"
+                  variant="ghost"
+                  onClick={stopHound}
+                  disabled={stoppingHound}
+                  className="h-8 px-2 text-destructive hover:text-destructive"
+                  title="Stop Hound (kills process on port 8765)"
+                >
+                  {stoppingHound ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <XCircle className="h-3.5 w-3.5" />}
                 </Button>
               )}
               <Button
