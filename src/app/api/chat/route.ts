@@ -1,4 +1,5 @@
 import { db } from '@/lib/db'
+import { callMcpTool } from '@/lib/mcp-client'
 
 interface ToolCallData {
   index: number
@@ -6,7 +7,7 @@ interface ToolCallData {
   type: string
   function: { name: string; arguments: string }
 }
-import { NextRequest } from 'next/server'
+import { NextRequest, NextResponse } from 'next/server'
 import { requireAuth } from '@/lib/auth-guard'
 
 interface IncomingMessage {
@@ -173,160 +174,220 @@ export async function POST(request: NextRequest) {
       }
     }
 
-    // Connect to LM Studio
-    const controller = new AbortController()
-    const timeout = setTimeout(() => controller.abort(), 30000)
-
-    let response: Response
-    try {
-      response = await fetch(`${lmStudioUrl}/chat/completions`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(requestBody),
-        signal: controller.signal,
-      })
-      clearTimeout(timeout)
-    } catch (fetchError) {
-      clearTimeout(timeout)
-      const errorMsg =
-        fetchError instanceof Error && fetchError.name === 'AbortError'
-          ? `Connection to LM Studio timed out. Make sure LM Studio is running at ${lmStudioUrl}`
-          : `Cannot connect to LM Studio at ${lmStudioUrl}. Make sure it's running and the server is started.`
-
-      return new Response(JSON.stringify({ error: errorMsg }), {
-        status: 502,
-        headers: { 'Content-Type': 'application/json' },
-      })
-    }
-
-    if (!response.ok) {
-      const errorText = await response.text()
-      return new Response(
-        JSON.stringify({ error: `LM Studio returned ${response.status}: ${errorText}` }),
-        { status: response.status, headers: { 'Content-Type': 'application/json' } }
-      )
-    }
-
-    // Stream the response
+    // Stream the response with tool-call execution loop.
+    // When the model emits tool_calls, we execute them via MCP, then re-call
+    // the model with the tool results, up to a max of 5 rounds.
     const encoder = new TextEncoder()
     let fullContent = ''
     let fullThinking = ''
-    let toolCallsData: ToolCallData[] = []
+    let allToolCalls: ToolCallData[] = []
+
+    // The messages array we send to LM Studio grows with each tool round:
+    // original messages + assistant tool_calls + tool results.
+    let currentMessages = [...apiMessages]
+    // The tools list (with MCP server URLs) for execution
+    const mcpToolList = (tools as Array<{ name: string; description?: string; inputSchema?: unknown; _url?: string; url?: string }>)
 
     const stream = new ReadableStream({
-      async start(controller) {
-        const reader = response.body?.getReader()
-        if (!reader) {
-          controller.close()
-          return
-        }
-
-        const decoder = new TextDecoder()
-        let buffer = ''
+      async start(streamController) {
+        const MAX_TOOL_ROUNDS = 5
 
         try {
-          while (true) {
-            const { done, value } = await reader.read()
-            if (done) break
+          for (let round = 0; round < MAX_TOOL_ROUNDS; round++) {
+            // Build the request body for this round
+            const roundBody: Record<string, unknown> = {
+              messages: currentMessages,
+              temperature: temp,
+              max_tokens: maxTokensVal,
+              stream: true,
+            }
+            if (selectedModel) roundBody.model = selectedModel
+            if (mcpToolList.length > 0) {
+              roundBody.tools = mcpToolList.map((t) => ({
+                type: 'function',
+                function: {
+                  name: t.name,
+                  description: t.description || '',
+                  parameters: t.inputSchema || { type: 'object', properties: {} },
+                },
+              }))
+            }
 
-            buffer += decoder.decode(value, { stream: true })
-            const lines = buffer.split('\n')
-            buffer = lines.pop() || ''
+            // Call LM Studio
+            const roundController = new AbortController()
+            const roundTimeout = setTimeout(() => roundController.abort(), 120000)
+            let response: Response
+            try {
+              response = await fetch(`${lmStudioUrl}/chat/completions`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify(roundBody),
+                signal: roundController.signal,
+              })
+              clearTimeout(roundTimeout)
+            } catch (fetchError) {
+              clearTimeout(roundTimeout)
+              const errorMsg =
+                fetchError instanceof Error && fetchError.name === 'AbortError'
+                  ? `Connection to LM Studio timed out.`
+                  : `Cannot connect to LM Studio at ${lmStudioUrl}.`
+              streamController.enqueue(encoder.encode(`data: ${JSON.stringify({ error: errorMsg })}\n\n`))
+              break
+            }
 
-            for (const line of lines) {
-              const trimmed = line.trim()
-              if (!trimmed || !trimmed.startsWith('data: ')) continue
+            if (!response.ok) {
+              const errorText = await response.text()
+              streamController.enqueue(encoder.encode(`data: ${JSON.stringify({ error: `LM Studio ${response.status}: ${errorText.slice(0, 200)}` })}\n\n`))
+              break
+            }
 
-              const data = trimmed.slice(6)
-              if (data === '[DONE]') {
-                controller.enqueue(encoder.encode('data: [DONE]\n\n'))
+            // Parse the streaming response, accumulate tool calls
+            const reader = response.body?.getReader()
+            if (!reader) break
+            const decoder = new TextDecoder()
+            let buffer = ''
+            let roundContent = ''
+            let roundThinking = ''
+            let roundToolCalls: ToolCallData[] = []
+
+            while (true) {
+              const { done, value } = await reader.read()
+              if (done) break
+              buffer += decoder.decode(value, { stream: true })
+              const lines = buffer.split('\n')
+              buffer = lines.pop() || ''
+              for (const line of lines) {
+                const trimmed = line.trim()
+                if (!trimmed || !trimmed.startsWith('data: ')) continue
+                const data = trimmed.slice(6)
+                if (data === '[DONE]') continue
+                try {
+                  const parsed = JSON.parse(data) as {
+                    choices?: Array<{
+                      delta?: {
+                        content?: string
+                        reasoning_content?: string
+                        tool_calls?: Array<{
+                          index: number
+                          id?: string
+                          function?: { name?: string; arguments?: string }
+                        }>
+                      }
+                    }>
+                  }
+                  const delta = parsed.choices?.[0]?.delta
+                  const reasoning = delta?.reasoning_content
+                  if (reasoning) {
+                    roundThinking += reasoning
+                    fullThinking += reasoning
+                    streamController.enqueue(encoder.encode(`data: ${JSON.stringify({ thinking: reasoning })}\n\n`))
+                  }
+                  const content = delta?.content
+                  if (content) {
+                    roundContent += content
+                    fullContent += content
+                    streamController.enqueue(encoder.encode(`data: ${JSON.stringify({ content })}\n\n`))
+                  }
+                  if (delta?.tool_calls) {
+                    for (const tc of delta.tool_calls as ToolCallData[]) {
+                      if (!roundToolCalls[tc.index]) {
+                        roundToolCalls[tc.index] = {
+                          index: tc.index,
+                          id: tc.id || '',
+                          type: 'function',
+                          function: { name: tc.function?.name || '', arguments: '' },
+                        }
+                      }
+                      if (tc.id) roundToolCalls[tc.index].id = tc.id
+                      if (tc.function?.name) roundToolCalls[tc.index].function.name += tc.function.name
+                      if (tc.function?.arguments) roundToolCalls[tc.index].function.arguments += tc.function.arguments
+                    }
+                  }
+                } catch {
+                  // skip malformed
+                }
+              }
+            }
+            reader.releaseLock()
+
+            // Clean up empty tool call slots
+            roundToolCalls = roundToolCalls.filter(Boolean)
+            const hasToolCalls = roundToolCalls.length > 0
+
+            if (!hasToolCalls) {
+              // No tool calls — we're done
+              break
+            }
+
+            // Accumulate tool calls for storage
+            allToolCalls.push(...roundToolCalls)
+
+            // Notify client of tool calls
+            streamController.enqueue(
+              encoder.encode(`data: ${JSON.stringify({ toolCalls: roundToolCalls })}\n\n`)
+            )
+
+            // Add the assistant message (with tool_calls) to the conversation
+            currentMessages.push({
+              role: 'assistant',
+              content: roundContent || '',
+              tool_calls: roundToolCalls.map((tc) => ({
+                id: tc.id,
+                type: 'function',
+                function: { name: tc.function.name, arguments: tc.function.arguments },
+              })),
+            } as IncomingMessage)
+
+            // Execute each tool call via MCP
+            for (const tc of roundToolCalls) {
+              const toolName = tc.function.name
+              let toolArgs: Record<string, unknown> = {}
+              try {
+                toolArgs = JSON.parse(tc.function.arguments || '{}')
+              } catch {
+                // keep empty args
+              }
+
+              // Find the MCP server URL for this tool
+              const toolDef = mcpToolList.find((t) => t.name === toolName)
+              const mcpUrl = toolDef?._url || toolDef?.url
+              if (!mcpUrl) {
+                streamController.enqueue(
+                  encoder.encode(`data: ${JSON.stringify({ toolResult: { name: toolName, error: `No MCP server URL for tool ${toolName}` } })}\n\n`)
+                )
+                currentMessages.push({
+                  role: 'tool',
+                  content: `Error: no MCP server URL for tool ${toolName}`,
+                  tool_call_id: tc.id,
+                } as IncomingMessage)
                 continue
               }
 
-              try {
-                const parsed = JSON.parse(data) as {
-                  choices?: Array<{
-                    delta?: {
-                      content?: string
-                      reasoning_content?: string
-                      tool_calls?: Array<{
-                        index: number
-                        id?: string
-                        function?: { name?: string; arguments?: string }
-                      }>
-                    }
-                  }>
-                }
-                const delta = parsed.choices?.[0]?.delta
+              streamController.enqueue(
+                encoder.encode(`data: ${JSON.stringify({ toolExecuting: { name: toolName, args: toolArgs } })}\n\n`)
+              )
 
-                // Handle reasoning/thinking content (e.g. DeepSeek R1)
-                const reasoning = delta?.reasoning_content
-                if (reasoning) {
-                  fullThinking += reasoning
-                  controller.enqueue(encoder.encode(`data: ${JSON.stringify({ thinking: reasoning })}\n\n`))
-                }
+              const result = await callMcpTool(mcpUrl, toolName, toolArgs)
 
-                // Handle content
-                const content = delta?.content
-                if (content) {
-                  fullContent += content
-                  controller.enqueue(encoder.encode(`data: ${JSON.stringify({ content })}\n\n`))
-                }
+              streamController.enqueue(
+                encoder.encode(`data: ${JSON.stringify({ toolResult: { name: toolName, content: result.content.slice(0, 2000), isError: result.isError } })}\n\n`)
+              )
 
-                // Handle tool calls (streaming)
-                if (delta?.tool_calls) {
-                  for (const tc of delta.tool_calls as ToolCallData[]) {
-                    if (!toolCallsData[tc.index]) {
-                      toolCallsData[tc.index] = {
-                        index: tc.index,
-                        id: tc.id || '',
-                        type: 'function',
-                        function: { name: tc.function?.name || '', arguments: '' },
-                      }
-                    }
-                    if (tc.id) toolCallsData[tc.index].id = tc.id
-                    if (tc.function?.name) toolCallsData[tc.index].function.name += tc.function.name
-                    if (tc.function?.arguments) toolCallsData[tc.index].function.arguments += tc.function.arguments
-                  }
-                  controller.enqueue(
-                    encoder.encode(`data: ${JSON.stringify({ toolCalls: toolCallsData })}\n\n`)
-                  )
-                }
-              } catch {
-                // Skip malformed JSON
-              }
+              currentMessages.push({
+                role: 'tool',
+                content: result.content.slice(0, 8000),  // cap to avoid context overflow
+                tool_call_id: tc.id,
+              } as IncomingMessage)
             }
+
+            // Loop continues — call LM Studio again with the tool results
           }
 
-          // Process remaining buffer
-          if (buffer.trim()) {
-            const trimmed = buffer.trim()
-            if (trimmed.startsWith('data: ') && trimmed.slice(6) !== '[DONE]') {
-              try {
-                const parsed = JSON.parse(trimmed.slice(6))
-                const content = parsed.choices?.[0]?.delta?.content
-                const reasoning = parsed.choices?.[0]?.delta?.reasoning_content
-                if (reasoning) {
-                  fullThinking += reasoning
-                  controller.enqueue(encoder.encode(`data: ${JSON.stringify({ thinking: reasoning })}\n\n`))
-                }
-                if (content) {
-                  fullContent += content
-                  controller.enqueue(encoder.encode(`data: ${JSON.stringify({ content })}\n\n`))
-                }
-              } catch {
-                // Skip
-              }
-            }
-          }
-
-          controller.enqueue(encoder.encode('data: [DONE]\n\n'))
-          controller.close()
+          streamController.enqueue(encoder.encode('data: [DONE]\n\n'))
+          streamController.close()
         } catch (streamError) {
-          controller.error(streamError)
+          streamController.error(streamError)
         } finally {
-          reader.releaseLock()
-
           // Save assistant message to DB
           if (conversationId && (fullContent || fullThinking)) {
             try {
@@ -336,7 +397,7 @@ export async function POST(request: NextRequest) {
                   content: fullContent,
                   thinking: fullThinking,
                   conversationId,
-                  toolCalls: JSON.stringify(toolCallsData),
+                  toolCalls: JSON.stringify(allToolCalls),
                 },
               })
             } catch {
@@ -354,10 +415,10 @@ export async function POST(request: NextRequest) {
         'Connection': 'keep-alive',
       },
     })
-  } catch {
-    return new Response(
-      JSON.stringify({ error: 'An unexpected error occurred' }),
-      { status: 500, headers: { 'Content-Type': 'application/json' } }
+  } catch (err) {
+    return NextResponse.json(
+      { error: 'An unexpected error occurred: ' + (err instanceof Error ? err.message : String(err)) },
+      { status: 500 }
     )
   }
 }

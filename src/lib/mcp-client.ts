@@ -204,3 +204,184 @@ async function tryLegacyDiscovery(
     protocol: 'simple-json',
   }
 }
+
+export interface McpToolCallResult {
+  content: string
+  isError?: boolean
+  raw?: unknown
+}
+
+/**
+ * Call a tool on an MCP server. Performs the streamable HTTP handshake
+ * (initialize + notifications/initialized) if needed, then calls tools/call.
+ *
+ * @param url MCP server HTTP endpoint
+ * @param name Tool name (e.g. 'smart_search')
+ * @param args Arguments object to pass to the tool
+ * @param timeoutMs Timeout in ms (default 60s — tools may take a while)
+ */
+export async function callMcpTool(
+  url: string,
+  name: string,
+  args: Record<string, unknown>,
+  timeoutMs = 60000
+): Promise<McpToolCallResult> {
+  const controller = new AbortController()
+  const timeout = setTimeout(() => controller.abort(), timeoutMs)
+
+  try {
+    // Step 1: initialize
+    const initRes = await fetch(url, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Accept': 'application/json, text/event-stream',
+      },
+      body: JSON.stringify({
+        jsonrpc: '2.0',
+        id: 1,
+        method: 'initialize',
+        params: {
+          protocolVersion: '2025-03-26',
+          capabilities: {},
+          clientInfo: { name: 'lm-studio-chat', version: '2.0.0' },
+        },
+      }),
+      signal: controller.signal,
+    })
+
+    if (!initRes.ok) {
+      // Try legacy single-shot
+      return await callToolLegacy(url, name, args, controller.signal)
+    }
+
+    const sessionId = initRes.headers.get('mcp-session-id') || ''
+    const initBody = await initRes.text()
+    void initBody // we don't need the init result for tool calls
+
+    // Step 2: notifications/initialized
+    if (sessionId) {
+      try {
+        await fetch(url, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'Accept': 'application/json, text/event-stream',
+            'Mcp-Session-Id': sessionId,
+          },
+          body: JSON.stringify({
+            jsonrpc: '2.0',
+            method: 'notifications/initialized',
+          }),
+          signal: controller.signal,
+        })
+      } catch {
+        // non-fatal
+      }
+    }
+
+    // Step 3: tools/call
+    const callRes = await fetch(url, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Accept': 'application/json, text/event-stream',
+        ...(sessionId ? { 'Mcp-Session-Id': sessionId } : {}),
+      },
+      body: JSON.stringify({
+        jsonrpc: '2.0',
+        id: 2,
+        method: 'tools/call',
+        params: { name, arguments: args },
+      }),
+      signal: controller.signal,
+    })
+
+    if (!callRes.ok) {
+      const errText = await callRes.text().catch(() => '')
+      return {
+        content: `Tool call failed: HTTP ${callRes.status} ${errText.slice(0, 200)}`,
+        isError: true,
+      }
+    }
+
+    const callBody = await callRes.text()
+    const parsed = parseSseBody(callBody) as
+      | { result?: { content?: Array<{ type: string; text?: string }> ; isError?: boolean }; error?: { message?: string } }
+      | null
+
+    if (parsed?.error) {
+      return {
+        content: `Tool error: ${parsed.error.message || JSON.stringify(parsed.error)}`,
+        isError: true,
+        raw: parsed,
+      }
+    }
+
+    // MCP tool results are an array of content blocks (text, image, etc.)
+    // Concatenate all text blocks into a single string.
+    const contentBlocks = parsed?.result?.content || []
+    const text = contentBlocks
+      .filter((b) => b.type === 'text' && b.text)
+      .map((b) => b.text as string)
+      .join('\n\n')
+
+    return {
+      content: text || '(tool returned no text content)',
+      isError: parsed?.result?.isError,
+      raw: parsed,
+    }
+  } catch (err) {
+    // Try legacy as fallback
+    try {
+      return await callToolLegacy(url, name, args, controller.signal)
+    } catch (err2) {
+      return {
+        content: `Tool call failed: ${err instanceof Error ? err.message : String(err)} / ${err2 instanceof Error ? err2.message : ''}`,
+        isError: true,
+      }
+    }
+  } finally {
+    clearTimeout(timeout)
+  }
+}
+
+/** Legacy tool call: single POST tools/call, expect direct JSON. */
+async function callToolLegacy(
+  url: string,
+  name: string,
+  args: Record<string, unknown>,
+  signal: AbortSignal
+): Promise<McpToolCallResult> {
+  const res = await fetch(url, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      jsonrpc: '2.0',
+      id: 1,
+      method: 'tools/call',
+      params: { name, arguments: args },
+    }),
+    signal,
+  })
+
+  if (!res.ok) {
+    return { content: `Tool call failed: HTTP ${res.status}`, isError: true }
+  }
+
+  const body = await res.text()
+  const parsed = parseSseBody(body) as
+    | { result?: { content?: Array<{ type: string; text?: string }> }; error?: { message?: string } }
+    | null
+
+  if (parsed?.error) {
+    return { content: `Tool error: ${parsed.error.message}`, isError: true }
+  }
+
+  const text = (parsed?.result?.content || [])
+    .filter((b) => b.type === 'text' && b.text)
+    .map((b) => b.text as string)
+    .join('\n\n')
+
+  return { content: text || '(no text content)' }
+}

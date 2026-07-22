@@ -54,11 +54,15 @@ export function ChatInput() {
   const setConnectionError = useChatStore((s) => s.setConnectionError)
 
   const getMcpTools = useCallback(() => {
-    const tools: { name: string; description?: string; inputSchema?: unknown }[] = []
+    // Each tool carries its origin server URL so the chat route can execute it.
+    const tools: { name: string; description?: string; inputSchema?: unknown; url: string }[] = []
     for (const server of mcpServers) {
       if (server.enabled && server.tools) {
         for (const tool of server.tools) {
-          tools.push(tool as { name: string; description?: string; inputSchema?: unknown })
+          tools.push({
+            ...(tool as { name: string; description?: string; inputSchema?: unknown }),
+            url: server.url,
+          })
         }
       }
     }
@@ -282,6 +286,19 @@ export function ChatInput() {
             }
             if (parsed.toolCalls) {
               useChatStore.getState().setStreamingToolCalls(parsed.toolCalls)
+              // Show a brief status that tools are being called
+              appendStreamingContent(`\n\n> 🔧 Calling tool: ${parsed.toolCalls.map((tc: { function?: { name?: string } }) => tc.function?.name).filter(Boolean).join(', ')}...\n\n`)
+            }
+            if (parsed.toolExecuting) {
+              appendStreamingContent(`\n⏳ Executing \`${parsed.toolExecuting.name}\`...\n`)
+            }
+            if (parsed.toolResult) {
+              const tr = parsed.toolResult
+              if (tr.isError) {
+                appendStreamingContent(`\n❌ \`${tr.name}\` failed: ${typeof tr.content === 'string' ? tr.content.slice(0, 300) : ''}\n\n`)
+              } else {
+                appendStreamingContent(`\n✅ \`${tr.name}\` returned ${typeof tr.content === 'string' ? tr.content.length : 0} chars\n\n`)
+              }
             }
             if (parsed.error) {
               setConnectionError(parsed.error)
