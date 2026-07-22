@@ -47,12 +47,21 @@ if %errorlevel% neq 0 (
 )
 
 echo.
-echo === Server is running! ===
+echo === Server is starting! ===
 echo Open http://localhost:3000 in your browser
-echo Press Ctrl+C to stop the server
+echo Press Ctrl+C to stop the server (and Hound if running)
 echo.
-echo Want web search? Open a SECOND terminal and run:
-echo   npm run start:hound
-echo Then click "Add to MCP" in the chat app's MCP Tools dialog.
+echo Hound MCP (web search) will auto-launch if installed.
+echo To install it later: npm run install:hound
 echo.
-call npx next start -p 3000
+
+REM Auto-install Hound on first run (silent skip if Python missing or install fails)
+where hound >nul 2>&1
+if errorlevel 1 (
+    echo Hound not detected. Attempting install...
+    call npm run install:hound
+    echo.
+)
+
+REM Start everything: Next.js + Hound (if available)
+node scripts/start-all.js
