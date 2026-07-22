@@ -1,6 +1,6 @@
 import { db } from '@/lib/db'
 import { NextRequest, NextResponse } from 'next/server'
-import { requireAuth } from '@/lib/auth-guard'
+import { requireAuth, requireValidAuth } from '@/lib/auth-guard'
 
 export async function GET() {
   const { error, session } = await requireAuth()
@@ -22,7 +22,7 @@ export async function GET() {
 }
 
 export async function POST(request: NextRequest) {
-  const { error, session } = await requireAuth()
+  const { error, session } = await requireValidAuth()
   if (error) return error
 
   try {

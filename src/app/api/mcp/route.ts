@@ -1,5 +1,5 @@
 import { db } from '@/lib/db'
-import { requireAuth } from '@/lib/auth-guard'
+import { requireAuth, requireValidAuth } from '@/lib/auth-guard'
 import { discoverMcpTools } from '@/lib/mcp-client'
 import { NextRequest, NextResponse } from 'next/server'
 
@@ -28,7 +28,9 @@ export async function GET() {
 }
 
 export async function POST(request: NextRequest) {
-  const { error, session } = await requireAuth()
+  // requireValidAuth verifies the session user ID still exists in the DB,
+  // catching the case where the DB was reset but the browser has an old JWT.
+  const { error, session } = await requireValidAuth()
   if (error) return error
 
   try {
