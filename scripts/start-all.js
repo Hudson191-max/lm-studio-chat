@@ -80,40 +80,73 @@ function probePort(host, port, path = '/mcp') {
 
 /** Try to find and kill any process listening on a given port. */
 function killProcessOnPort(port) {
+  let killed = 0
+  const pids = new Set()
+
   try {
     if (isWin) {
       // netstat -ano | findstr :8765 → last column is PID
-      const out = execSync(`netstat -ano | findstr :${port}`, { encoding: 'utf8' })
-      const pids = new Set()
-      for (const line of out.split('\n')) {
-        const parts = line.trim().split(/\s+/)
-        if (parts.length >= 5 && parts[1].endsWith(`:${port}`)) {
-          pids.add(parts[4])
+      try {
+        const out = execSync(`netstat -ano | findstr :${port}`, { encoding: 'utf8' })
+        for (const line of out.split('\n')) {
+          const parts = line.trim().split(/\s+/)
+          if (parts.length >= 5 && parts[1].endsWith(`:${port}`)) {
+            pids.add(parts[4])
+          }
         }
-      }
+      } catch {}
       for (const pid of pids) {
         if (pid && pid !== '0') {
           try {
-            execSync(`taskkill /F /PID ${pid}`, { stdio: 'ignore' })
+            execSync(`taskkill /F /PID ${pid} /T`, { stdio: 'ignore' })
+            killed++
             console.log(`[orchestrator] Killed PID ${pid} on port ${port}`)
           } catch {}
         }
       }
-      return pids.size
+      return killed
     } else {
-      // lsof -ti :8765 → list PIDs
-      const out = execSync(`lsof -ti :${port} 2>/dev/null`, { encoding: 'utf8' })
-      const pids = out.split('\n').map((s) => s.trim()).filter(Boolean)
+      // Try lsof first (most common on macOS/Linux)
+      try {
+        const out = execSync(`lsof -ti :${port} 2>/dev/null`, { encoding: 'utf8' })
+        for (const pid of out.split('\n').map((s) => s.trim()).filter(Boolean)) {
+          pids.add(pid)
+        }
+      } catch {}
+
+      // Also try ss (common on modern Linux) if lsof found nothing
+      if (pids.size === 0) {
+        try {
+          const out = execSync(`ss -lptn 'sport = :${port}' 2>/dev/null`, { encoding: 'utf8' })
+          // Output looks like: ... users:(("next-server",pid=12345,fd=20))
+          const pidMatches = out.matchAll(/pid=(\d+)/g)
+          for (const m of pidMatches) {
+            pids.add(m[1])
+          }
+        } catch {}
+      }
+
+      // Also try fuser as a last resort
+      if (pids.size === 0) {
+        try {
+          const out = execSync(`fuser ${port}/tcp 2>/dev/null`, { encoding: 'utf8' })
+          for (const pid of out.split(/\s+/).map((s) => s.trim()).filter(Boolean)) {
+            pids.add(pid)
+          }
+        } catch {}
+      }
+
       for (const pid of pids) {
         try {
           process.kill(parseInt(pid, 10), 'SIGTERM')
+          killed++
           console.log(`[orchestrator] Killed PID ${pid} on port ${port}`)
         } catch {}
       }
-      return pids.length
+      return killed
     }
   } catch {
-    return 0
+    return killed
   }
 }
 
@@ -227,12 +260,39 @@ process.on('SIGTERM', () => shutdown(0))
 
 // Parse --kill-hound flag: find and kill whatever is on port 8765, then exit.
 if (process.argv.includes('--kill-hound')) {
-  console.log(`[orchestrator] Killing any process on port ${HOUND_PORT}...`)
+  console.log(`[orchestrator] Killing any process on port ${HOUND_PORT} (Hound)...`)
   const count = killProcessOnPort(HOUND_PORT)
   if (count > 0) {
-    console.log(`[orchestrator] Killed ${count} process(es).`)
+    console.log(`[orchestrator] Killed ${count} process(es) on port ${HOUND_PORT}.`)
   } else {
     console.log(`[orchestrator] No process found on port ${HOUND_PORT}.`)
+  }
+  process.exit(0)
+}
+
+// Parse --kill-all flag: kill Hound (port 8765) AND Next.js (port 3000), then exit.
+if (process.argv.includes('--kill-all') || process.argv.includes('--stop-all')) {
+  console.log(`[orchestrator] Stopping everything (Hound on ${HOUND_PORT} + Next.js on ${APP_PORT})...`)
+  const houndCount = killProcessOnPort(HOUND_PORT)
+  const nextCount = killProcessOnPort(APP_PORT)
+  console.log(`[orchestrator] Hound: killed ${houndCount} process(es) on port ${HOUND_PORT}.`)
+  console.log(`[orchestrator] Next.js: killed ${nextCount} process(es) on port ${APP_PORT}.`)
+  if (houndCount === 0 && nextCount === 0) {
+    console.log('[orchestrator] Nothing was running.')
+  } else {
+    console.log('[orchestrator] All services stopped.')
+  }
+  process.exit(0)
+}
+
+// Parse --kill-next flag: kill only Next.js (port 3000), leave Hound alone.
+if (process.argv.includes('--kill-next')) {
+  console.log(`[orchestrator] Killing any process on port ${APP_PORT} (Next.js)...`)
+  const count = killProcessOnPort(APP_PORT)
+  if (count > 0) {
+    console.log(`[orchestrator] Killed ${count} process(es) on port ${APP_PORT}.`)
+  } else {
+    console.log(`[orchestrator] No process found on port ${APP_PORT}.`)
   }
   process.exit(0)
 }

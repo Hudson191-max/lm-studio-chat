@@ -5,7 +5,7 @@ import { useSession, signOut } from 'next-auth/react'
 import { useRouter } from 'next/navigation'
 import {
   Users, MessageSquare, Brain, LogIn, Plus, Trash2, Shield,
-  ArrowLeft, Loader2, Eye, EyeOff, UserPlus
+  ArrowLeft, Loader2, Eye, EyeOff, UserPlus, Power
 } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
@@ -169,6 +169,25 @@ export default function AdminPage() {
         </div>
         <div className="flex items-center gap-2">
           <span className="text-xs text-muted-foreground">{session.user?.username}</span>
+          <Button
+            variant="ghost"
+            size="icon"
+            className="h-8 w-8 text-destructive hover:text-destructive"
+            onClick={async () => {
+              if (!confirm('Stop the server? This will shut down both Next.js (port 3000) and Hound (port 8765). The page will stop responding. You will need to restart it from the command line (START.bat or npm run start:all).')) return
+              try {
+                await fetch('/api/admin/stop-server', { method: 'POST' })
+              } catch {
+                // Expected — the server is shutting down
+              }
+              setTimeout(() => {
+                alert('Server is shutting down. Close this tab and restart it from the command line when ready.')
+              }, 1500)
+            }}
+            title="Stop server (shuts down Next.js + Hound)"
+          >
+            <Power className="h-4 w-4" />
+          </Button>
           <Button
             variant="ghost"
             size="icon"

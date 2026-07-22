@@ -1,12 +1,12 @@
 @echo off
-echo === Stopping Hound MCP ===
+echo === Stopping LM Studio Chat (Next.js + Hound) ===
 echo.
-echo Looking for any process on port 8765 (Hound's default port)...
+echo Killing any process on port 3000 (Next.js) and port 8765 (Hound MCP)...
 echo.
 
-node scripts/start-all.js --kill-hound
+node scripts/start-all.js --kill-all
 
 echo.
-echo Done. If Hound was running, it has been stopped.
+echo Done. Both services have been stopped (if they were running).
 echo.
 pause
