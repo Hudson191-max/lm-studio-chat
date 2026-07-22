@@ -55,13 +55,39 @@ echo Hound MCP (web search) will auto-launch if installed.
 echo To install it later: npm run install:hound
 echo.
 
-REM Auto-install Hound on first run (silent skip if Python missing or install fails)
+REM Check if Hound is installed; if not, try to install it
 where hound >nul 2>&1
 if errorlevel 1 (
-    echo Hound not detected. Attempting install...
+    echo.
+    echo --- Hound not detected. Attempting install ---
+    echo This requires Python 3.9+ and pip. If install fails, the chat app
+    echo will still run — you just won't have web search.
+    echo.
     call npm run install:hound
+    if errorlevel 1 (
+        echo.
+        echo WARNING: Hound install failed. The chat app will start without
+        echo web search. You can retry later with: npm run install:hound
+        echo.
+    )
     echo.
 )
 
 REM Start everything: Next.js + Hound (if available)
+echo ============================================================
+echo  Starting LM Studio Chat + Hound (if available)...
+echo  Keep this window open while using the app.
+echo  Press Ctrl+C to stop both services.
+echo ============================================================
+echo.
 node scripts/start-all.js
+
+REM If we get here, the orchestrator exited (crash or Ctrl+C). Keep window open.
+echo.
+echo ============================================================
+echo  Server has stopped.
+echo ============================================================
+echo.
+echo If the server crashed unexpectedly, check the messages above.
+echo.
+pause

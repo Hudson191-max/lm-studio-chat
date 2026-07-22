@@ -40,11 +40,24 @@ export async function POST(request: NextRequest) {
 
     // Discover tools from the MCP server (supports both streamable HTTP and legacy)
     let tools: unknown[] = []
+    let discoveryError: string | null = null
     try {
       const result = await discoverMcpTools(url)
       tools = result.tools
-    } catch {
-      // Server might not be reachable yet, that's ok — save with empty tools
+      if (tools.length === 0) {
+        discoveryError = 'Server was reachable but returned 0 tools. It may still be starting up — try refreshing in a few seconds.'
+      }
+    } catch (err) {
+      discoveryError = err instanceof Error ? err.message : 'Could not reach the server'
+    }
+
+    // If we couldn't reach the server at all, return a clear error instead of
+    // silently saving an empty-tools entry. The user can retry once it's running.
+    if (tools.length === 0 && discoveryError && !discoveryError.includes('0 tools')) {
+      return NextResponse.json(
+        { error: `Could not connect to ${url}. ${discoveryError}. Make sure the MCP server is running.` },
+        { status: 502 }
+      )
     }
 
     const server = await db.mcpServer.create({
@@ -62,6 +75,7 @@ export async function POST(request: NextRequest) {
       url: server.url,
       enabled: server.enabled,
       tools,
+      warning: discoveryError || undefined,
     })
   } catch {
     return NextResponse.json({ error: 'Failed to add MCP server' }, { status: 500 })
