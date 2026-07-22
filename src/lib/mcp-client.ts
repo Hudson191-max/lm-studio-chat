@@ -311,6 +311,7 @@ export async function callMcpTool(
       | null
 
     if (parsed?.error) {
+      console.error(`[mcp-client] tools/call error for ${name}:`, parsed.error)
       return {
         content: `Tool error: ${parsed.error.message || JSON.stringify(parsed.error)}`,
         isError: true,
@@ -326,8 +327,12 @@ export async function callMcpTool(
       .map((b) => b.text as string)
       .join('\n\n')
 
+    if (!text) {
+      console.error(`[mcp-client] tools/call returned no text for ${name}. Raw response:`, callBody.slice(0, 500))
+    }
+
     return {
-      content: text || '(tool returned no text content)',
+      content: text || `(tool '${name}' returned no text content — check server logs)`,
       isError: parsed?.result?.isError,
       raw: parsed,
     }

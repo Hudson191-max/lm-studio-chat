@@ -299,7 +299,12 @@ export async function POST(request: NextRequest) {
                         }
                       }
                       if (tc.id) roundToolCalls[tc.index].id = tc.id
-                      if (tc.function?.name) roundToolCalls[tc.index].function.name += tc.function.name
+                      // Tool name: set only if empty (some models resend the name
+                      // in every chunk, which would duplicate it with +=)
+                      if (tc.function?.name && !roundToolCalls[tc.index].function.name) {
+                        roundToolCalls[tc.index].function.name = tc.function.name
+                      }
+                      // Arguments: always append (genuinely streamed in pieces)
                       if (tc.function?.arguments) roundToolCalls[tc.index].function.arguments += tc.function.arguments
                     }
                   }
@@ -344,14 +349,15 @@ export async function POST(request: NextRequest) {
               let toolArgs: Record<string, unknown> = {}
               try {
                 toolArgs = JSON.parse(tc.function.arguments || '{}')
-              } catch {
-                // keep empty args
+              } catch (e) {
+                console.error(`[chat] Failed to parse tool args for ${toolName}:`, tc.function.arguments)
               }
 
               // Find the MCP server URL for this tool
               const toolDef = mcpToolList.find((t) => t.name === toolName)
               const mcpUrl = toolDef?._url || toolDef?.url
               if (!mcpUrl) {
+                console.error(`[chat] No MCP server URL found for tool: ${toolName}`)
                 streamController.enqueue(
                   encoder.encode(`data: ${JSON.stringify({ toolResult: { name: toolName, error: `No MCP server URL for tool ${toolName}` } })}\n\n`)
                 )
@@ -363,11 +369,15 @@ export async function POST(request: NextRequest) {
                 continue
               }
 
+              console.log(`[chat] Executing tool ${toolName} on ${mcpUrl} with args:`, JSON.stringify(toolArgs).slice(0, 200))
+
               streamController.enqueue(
                 encoder.encode(`data: ${JSON.stringify({ toolExecuting: { name: toolName, args: toolArgs } })}\n\n`)
               )
 
               const result = await callMcpTool(mcpUrl, toolName, toolArgs)
+
+              console.log(`[chat] Tool ${toolName} returned ${result.content.length} chars (isError=${result.isError})`)
 
               streamController.enqueue(
                 encoder.encode(`data: ${JSON.stringify({ toolResult: { name: toolName, content: result.content.slice(0, 2000), isError: result.isError } })}\n\n`)
