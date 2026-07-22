@@ -26,6 +26,11 @@ export async function PATCH(
       return NextResponse.json({ error: 'Message not found' }, { status: 404 })
     }
 
+    // Verify ownership via the conversation
+    if (message.conversation.userId !== session!.user.id) {
+      return NextResponse.json({ error: 'Not authorized' }, { status: 403 })
+    }
+
     if (message.role !== 'user') {
       return NextResponse.json({ error: 'Only user messages can be edited' }, { status: 400 })
     }
@@ -35,7 +40,6 @@ export async function PATCH(
       data: { content, editedAt: new Date() },
     })
 
-    // Delete all messages after this one (assistant responses that followed)
     await db.message.deleteMany({
       where: {
         conversationId: message.conversationId,
@@ -53,17 +57,23 @@ export async function DELETE(
   _request: NextRequest,
   { params }: { params: Promise<{ id: string }> }
 ) {
-  const { error } = await requireAuth()
+  const { error, session } = await requireAuth()
   if (error) return error
 
   try {
     const { id } = await params
-    const message = await db.message.findUnique({ where: { id } })
+    const message = await db.message.findUnique({
+      where: { id },
+      include: { conversation: { select: { userId: true } } },
+    })
     if (!message) {
       return NextResponse.json({ error: 'Message not found' }, { status: 404 })
     }
 
-    // Delete this message and all after it
+    if (message.conversation.userId !== session!.user.id) {
+      return NextResponse.json({ error: 'Not authorized' }, { status: 403 })
+    }
+
     await db.message.deleteMany({
       where: {
         conversationId: message.conversationId,

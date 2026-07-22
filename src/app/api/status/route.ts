@@ -8,13 +8,16 @@ interface ModelInfo {
 }
 
 export async function GET() {
-  const { error } = await requireAuth()
+  const { error, session } = await requireAuth()
   if (error) return error
 
   try {
     let lmStudioUrl = 'http://localhost:1234/v1'
     try {
-      const urlSetting = await db.settings.findUnique({ where: { key: 'lmStudioUrl' } })
+      // Per-user settings: use composite unique key
+      const urlSetting = await db.settings.findUnique({
+        where: { userId_key: { userId: session!.user.id, key: 'lmStudioUrl' } },
+      })
       if (urlSetting?.value) {
         lmStudioUrl = urlSetting.value.replace(/\/+$/, '')
       }

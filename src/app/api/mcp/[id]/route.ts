@@ -6,12 +6,21 @@ export async function PATCH(
   request: NextRequest,
   { params }: { params: Promise<{ id: string }> }
 ) {
-  const { error } = await requireAuth()
+  const { error, session } = await requireAuth()
   if (error) return error
 
   try {
     const { id } = await params
     const { name, url, enabled } = await request.json()
+
+    // Verify ownership
+    const existing = await db.mcpServer.findFirst({
+      where: { id, userId: session!.user.id },
+      select: { id: true },
+    })
+    if (!existing) {
+      return NextResponse.json({ error: 'Server not found' }, { status: 404 })
+    }
 
     const server = await db.mcpServer.update({
       where: { id },
@@ -34,12 +43,14 @@ export async function POST(
   _request: NextRequest,
   { params }: { params: Promise<{ id: string }> }
 ) {
-  const { error } = await requireAuth()
+  const { error, session } = await requireAuth()
   if (error) return error
 
   try {
     const { id } = await params
-    const server = await db.mcpServer.findUnique({ where: { id } })
+    const server = await db.mcpServer.findFirst({
+      where: { id, userId: session!.user.id },
+    })
     if (!server) {
       return NextResponse.json({ error: 'Server not found' }, { status: 404 })
     }
@@ -87,11 +98,19 @@ export async function DELETE(
   _request: NextRequest,
   { params }: { params: Promise<{ id: string }> }
 ) {
-  const { error } = await requireAuth()
+  const { error, session } = await requireAuth()
   if (error) return error
 
   try {
     const { id } = await params
+    const existing = await db.mcpServer.findFirst({
+      where: { id, userId: session!.user.id },
+      select: { id: true },
+    })
+    if (!existing) {
+      return NextResponse.json({ error: 'Server not found' }, { status: 404 })
+    }
+
     await db.mcpServer.delete({ where: { id } })
     return NextResponse.json({ success: true })
   } catch {

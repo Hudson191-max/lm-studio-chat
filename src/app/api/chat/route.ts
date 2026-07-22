@@ -71,23 +71,27 @@ export async function POST(request: NextRequest) {
       // Use defaults
     }
 
-    // Get conversation for system prompt and profile override
+    // Get conversation for system prompt and profile override (verify ownership)
     if (conversationId) {
       try {
-        const convo = await db.conversation.findUnique({
-          where: { id: conversationId },
+        const convo = await db.conversation.findFirst({
+          where: { id: conversationId, userId: session!.user.id },
           include: { profile: true },
         })
-        if (convo) {
-          if (convo.systemPrompt && !convoSystemPrompt) {
-            convoSystemPrompt = convo.systemPrompt
-          }
-          if (convo.profile) {
-            if (convo.profile.url) lmStudioUrl = convo.profile.url.replace(/\/+$/, '')
-            if (convo.profile.model && !selectedModel) selectedModel = convo.profile.model
-            if (convo.profile.temperature) temp = convo.profile.temperature
-            if (convo.profile.maxTokens) maxTokensVal = convo.profile.maxTokens
-          }
+        if (!convo) {
+          return new Response(JSON.stringify({ error: 'Conversation not found' }), {
+            status: 404,
+            headers: { 'Content-Type': 'application/json' },
+          })
+        }
+        if (convo.systemPrompt && !convoSystemPrompt) {
+          convoSystemPrompt = convo.systemPrompt
+        }
+        if (convo.profile) {
+          if (convo.profile.url) lmStudioUrl = convo.profile.url.replace(/\/+$/, '')
+          if (convo.profile.model && !selectedModel) selectedModel = convo.profile.model
+          if (convo.profile.temperature) temp = convo.profile.temperature
+          if (convo.profile.maxTokens) maxTokensVal = convo.profile.maxTokens
         }
       } catch {
         // skip

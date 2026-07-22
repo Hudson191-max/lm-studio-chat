@@ -3,11 +3,13 @@ import { NextRequest, NextResponse } from 'next/server'
 import { requireAuth } from '@/lib/auth-guard'
 
 export async function GET() {
-  const { error } = await requireAuth()
+  const { error, session } = await requireAuth()
   if (error) return error
 
   try {
-    const settings = await db.settings.findMany()
+    const settings = await db.settings.findMany({
+      where: { userId: session!.user.id },
+    })
     const settingsMap: Record<string, string> = {}
     for (const s of settings) {
       settingsMap[s.key] = s.value
@@ -19,7 +21,7 @@ export async function GET() {
 }
 
 export async function POST(request: NextRequest) {
-  const { error } = await requireAuth()
+  const { error, session } = await requireAuth()
   if (error) return error
 
   try {
@@ -30,10 +32,11 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: 'Key is required' }, { status: 400 })
     }
 
+    // Use composite unique key [userId, key] for upsert
     await db.settings.upsert({
-      where: { key },
+      where: { userId_key: { userId: session!.user.id, key } },
       update: { value: value ?? '' },
-      create: { key, value: value ?? '' },
+      create: { key, value: value ?? '', userId: session!.user.id },
     })
 
     return NextResponse.json({ success: true })

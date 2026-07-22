@@ -20,11 +20,13 @@ export async function DELETE(
   }
 
   try {
-    // Delete user's conversations (messages cascade)
+    // Clean up all user-owned data (cascade handles this for new rows, but
+    // we delete explicitly for safety on legacy data without the cascade).
+    await db.settings.deleteMany({ where: { userId: id } })
+    await db.mcpServer.deleteMany({ where: { userId: id } })
+    await db.modelProfile.deleteMany({ where: { userId: id } })
     await db.conversation.deleteMany({ where: { userId: id } })
-    // Delete login attempts
     await db.loginAttempt.deleteMany({ where: { accountId: id } })
-    // Delete the account
     await db.account.delete({ where: { id } })
 
     return NextResponse.json({ success: true })

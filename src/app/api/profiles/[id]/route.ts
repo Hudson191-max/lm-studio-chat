@@ -13,6 +13,15 @@ export async function PATCH(
     const { id } = await params
     const data = await request.json()
 
+    // Verify ownership
+    const existing = await db.modelProfile.findFirst({
+      where: { id, userId: session!.user.id },
+      select: { id: true },
+    })
+    if (!existing) {
+      return NextResponse.json({ error: 'Profile not found' }, { status: 404 })
+    }
+
     if (data.isDefault) {
       await db.modelProfile.updateMany({
         where: { userId: session!.user.id },
@@ -42,11 +51,19 @@ export async function DELETE(
   _request: NextRequest,
   { params }: { params: Promise<{ id: string }> }
 ) {
-  const { error } = await requireAuth()
+  const { error, session } = await requireAuth()
   if (error) return error
 
   try {
     const { id } = await params
+    const existing = await db.modelProfile.findFirst({
+      where: { id, userId: session!.user.id },
+      select: { id: true },
+    })
+    if (!existing) {
+      return NextResponse.json({ error: 'Profile not found' }, { status: 404 })
+    }
+
     await db.modelProfile.delete({ where: { id } })
     return NextResponse.json({ success: true })
   } catch {

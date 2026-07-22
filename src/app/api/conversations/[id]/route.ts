@@ -6,18 +6,14 @@ export async function GET(
   _request: NextRequest,
   { params }: { params: Promise<{ id: string }> }
 ) {
-  const { error } = await requireAuth()
+  const { error, session } = await requireAuth()
   if (error) return error
 
   try {
     const { id } = await params
-    const conversation = await db.conversation.findUnique({
-      where: { id },
-      include: {
-        messages: {
-          orderBy: { createdAt: 'asc' },
-        },
-      },
+    const conversation = await db.conversation.findFirst({
+      where: { id, userId: session!.user.id },
+      include: { messages: { orderBy: { createdAt: 'asc' } } },
     })
 
     if (!conversation) {
@@ -34,22 +30,26 @@ export async function PATCH(
   request: NextRequest,
   { params }: { params: Promise<{ id: string }> }
 ) {
-  const { error } = await requireAuth()
+  const { error, session } = await requireAuth()
   if (error) return error
 
   try {
     const { id } = await params
+    const existing = await db.conversation.findFirst({
+      where: { id, userId: session!.user.id },
+      select: { id: true },
+    })
+    if (!existing) {
+      return NextResponse.json({ error: 'Conversation not found' }, { status: 404 })
+    }
+
     const body = await request.json()
     const { title, systemPrompt } = body
     const data: Record<string, string> = {}
     if (title !== undefined) data.title = title
     if (systemPrompt !== undefined) data.systemPrompt = systemPrompt
 
-    const conversation = await db.conversation.update({
-      where: { id },
-      data,
-    })
-
+    const conversation = await db.conversation.update({ where: { id }, data })
     return NextResponse.json(conversation)
   } catch {
     return NextResponse.json({ error: 'Failed to update conversation' }, { status: 500 })
@@ -60,11 +60,19 @@ export async function DELETE(
   _request: NextRequest,
   { params }: { params: Promise<{ id: string }> }
 ) {
-  const { error } = await requireAuth()
+  const { error, session } = await requireAuth()
   if (error) return error
 
   try {
     const { id } = await params
+    const existing = await db.conversation.findFirst({
+      where: { id, userId: session!.user.id },
+      select: { id: true },
+    })
+    if (!existing) {
+      return NextResponse.json({ error: 'Conversation not found' }, { status: 404 })
+    }
+
     await db.conversation.delete({ where: { id } })
     return NextResponse.json({ success: true })
   } catch {

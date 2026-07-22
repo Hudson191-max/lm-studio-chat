@@ -6,13 +6,13 @@ export async function GET(
   _request: NextRequest,
   { params }: { params: Promise<{ id: string }> }
 ) {
-  const { error } = await requireAuth()
+  const { error, session } = await requireAuth()
   if (error) return error
 
   try {
     const { id } = await params
-    const conversation = await db.conversation.findUnique({
-      where: { id },
+    const conversation = await db.conversation.findFirst({
+      where: { id, userId: session!.user.id },
       include: { messages: { orderBy: { createdAt: 'asc' } } },
     })
 
