@@ -153,65 +153,80 @@ function killProcessOnPort(port) {
 }
 
 /**
- * Find the hound executable. On Unix it's usually on PATH.
- * On Windows, pip installs to Python's Scripts\ directory which may not
- * be on PATH — so we check common locations:
- *   - %APPDATA%\Python\Scripts\hound.exe  (per-user pip install)
- *   - %LOCALAPPDATA%\Programs\Python\PythonXX\Scripts\hound.exe
- *   - %USERPROFILE%\AppData\Roaming\Python\PythonXX\Scripts\hound.exe
- *   - C:\PythonXX\Scripts\hound.exe
- *   - C:\Program Files\PythonXX\Scripts\hound.exe
+ * Find the hound executable. Returns { cmd, args, shell } where:
+ *   - cmd: the command to spawn (full path or 'python')
+ *   - args: prefix args to pass before the hound args
+ *   - shell: whether spawn should use shell:true
+ *
+ * Tries in order:
+ *   1. 'where hound' (Windows) / 'which hound' (Unix) → full path, no shell
+ *   2. Common Python Scripts directories (Windows only)
+ *   3. 'python -m hound_mcp' (works if package installed, even if script not on PATH)
+ *   4. 'hound' via shell (last resort, triggers DEP0190 warning)
  */
 function findHoundExecutable() {
-  // Try PATH first (works on Unix, and Windows if Scripts is on PATH)
-  // We'll let spawn handle this with shell:true on Windows.
-
-  if (!isWin) {
-    return { cmd: 'hound', args: [] }
-  }
-
-  // On Windows, search common install locations for hound.exe
-  const candidates = []
-  const appdata = process.env.APPDATA || ''
-  const localappdata = process.env.LOCALAPPDATA || ''
-  const userprofile = process.env.USERPROFILE || ''
-  const programFiles = process.env.ProgramFiles || 'C:\\Program Files'
-
-  // Per-user pip install (most common with `pip install --user`)
-  if (appdata) {
-    candidates.push(path.join(appdata, 'Python', 'Scripts', 'hound.exe'))
-  }
-  // Roaming profile Python installs
-  if (userprofile) {
-    candidates.push(path.join(userprofile, 'AppData', 'Roaming', 'Python', 'Scripts', 'hound.exe'))
-    for (const ver of ['Python313', 'Python312', 'Python311', 'Python310', 'Python39']) {
-      candidates.push(path.join(userprofile, 'AppData', 'Roaming', 'Python', ver, 'Scripts', 'hound.exe'))
-    }
-  }
-  // Local Programs Python
-  if (localappdata) {
-    for (const ver of ['Python313', 'Python312', 'Python311', 'Python310', 'Python39']) {
-      candidates.push(path.join(localappdata, 'Programs', 'Python', ver, 'Scripts', 'hound.exe'))
-    }
-  }
-  // System-wide Python
-  for (const root of ['C:\\', programFiles]) {
-    for (const ver of ['Python313', 'Python312', 'Python311', 'Python310', 'Python39']) {
-      candidates.push(path.join(root, ver, 'Scripts', 'hound.exe'))
-      candidates.push(path.join(root, 'Python' + ver.replace('Python', ''), 'Scripts', 'hound.exe'))
-    }
-  }
-
-  for (const candidate of candidates) {
-    try {
-      if (fs.existsSync(candidate)) {
-        return { cmd: candidate, args: [] }
+  // 1. Try `where`/`which` to resolve the full path (avoids shell:true)
+  try {
+    const which = isWin ? 'where hound' : 'which hound'
+    const out = execSync(which, { encoding: 'utf8', stdio: ['pipe', 'pipe', 'ignore'] }).trim()
+    if (out) {
+      // `where` may return multiple lines; take the first
+      const first = out.split('\n')[0].trim()
+      if (first && fs.existsSync(first)) {
+        return { cmd: first, args: [], shell: false }
       }
-    } catch {}
+    }
+  } catch {}
+
+  // 2. On Windows, search common install locations for hound.exe
+  if (isWin) {
+    const candidates = []
+    const appdata = process.env.APPDATA || ''
+    const localappdata = process.env.LOCALAPPDATA || ''
+    const userprofile = process.env.USERPROFILE || ''
+    const programFiles = process.env.ProgramFiles || 'C:\\Program Files'
+
+    if (appdata) {
+      candidates.push(path.join(appdata, 'Python', 'Scripts', 'hound.exe'))
+    }
+    if (userprofile) {
+      candidates.push(path.join(userprofile, 'AppData', 'Roaming', 'Python', 'Scripts', 'hound.exe'))
+      for (const ver of ['Python313', 'Python312', 'Python311', 'Python310', 'Python39']) {
+        candidates.push(path.join(userprofile, 'AppData', 'Roaming', 'Python', ver, 'Scripts', 'hound.exe'))
+      }
+    }
+    if (localappdata) {
+      for (const ver of ['Python313', 'Python312', 'Python311', 'Python310', 'Python39']) {
+        candidates.push(path.join(localappdata, 'Programs', 'Python', ver, 'Scripts', 'hound.exe'))
+      }
+    }
+    for (const root of ['C:\\', programFiles]) {
+      for (const ver of ['Python313', 'Python312', 'Python311', 'Python310', 'Python39']) {
+        candidates.push(path.join(root, ver, 'Scripts', 'hound.exe'))
+      }
+    }
+
+    for (const candidate of candidates) {
+      try {
+        if (fs.existsSync(candidate)) {
+          return { cmd: candidate, args: [], shell: false }
+        }
+      } catch {}
+    }
   }
 
-  // Fallback: just use 'hound' and let spawn find it (or fail with a clear error)
-  return { cmd: 'hound', args: [] }
+  // 3. Try `python -m master_fetch` — works if the package is installed even
+  //    when the hound.exe script isn't on PATH. The PyPI package is
+  //    'hound-mcp' but the import name is 'master_fetch'.
+  const pythonCmd = isWin ? 'python' : 'python3'
+  try {
+    execSync(`${pythonCmd} -c "import master_fetch"`, { encoding: 'utf8', stdio: ['pipe', 'pipe', 'ignore'] })
+    // Package is importable — use module invocation
+    return { cmd: pythonCmd, args: ['-m', 'master_fetch'], shell: false }
+  } catch {}
+
+  // 4. Last resort: 'hound' via shell (may trigger DEP0190 warning)
+  return { cmd: 'hound', args: [], shell: isWin }
 }
 
 function startHound() {
@@ -220,12 +235,12 @@ function startHound() {
     return null
   }
 
-  const { cmd: houndCmd, args: houndArgs } = findHoundExecutable()
+  const { cmd: houndCmd, args: houndArgs, shell: useShell } = findHoundExecutable()
   const houndFullArgs = [...houndArgs, '--http', '--host', HOUND_HOST, '--port', HOUND_PORT]
-  console.log(`[orchestrator] Starting Hound MCP (${houndCmd})...`)
+  console.log(`[orchestrator] Starting Hound MCP (${houndCmd} ${houndArgs.join(' ')})...`)
   const proc = spawn(houndCmd, houndFullArgs, {
     stdio: ['ignore', 'pipe', 'pipe'],
-    shell: isWin && houndCmd === 'hound',  // only use shell for PATH lookup
+    shell: useShell,
     env: { ...process.env },
   })
 
@@ -269,11 +284,30 @@ function startHound() {
 function startNext() {
   const args = MODE === 'dev' ? ['next', 'dev', '-p', APP_PORT] : ['next', 'start', '-p', APP_PORT]
   console.log(`[orchestrator] Starting Next.js (${MODE}) on port ${APP_PORT}...`)
-  // On Windows, npx is npx.cmd (a batch file) — spawn() can't execute .cmd
-  // files without shell:true. On Unix, npx is a real executable shebang script.
-  const proc = spawn('npx', args, {
+
+  // On Windows, npx is npx.cmd (a batch file). spawn() can't execute .cmd
+  // files without shell:true, but shell:true with args triggers DEP0190.
+  // Resolve the full path to npx.cmd first via `where npx`, then spawn
+  // directly without shell. On Unix, npx is a real executable.
+  let npxCmd = 'npx'
+  let useShell = false
+  if (isWin) {
+    try {
+      const out = execSync('where npx.cmd', { encoding: 'utf8', stdio: ['pipe', 'pipe', 'ignore'] }).trim()
+      const first = out.split('\n')[0].trim()
+      if (first && fs.existsSync(first)) {
+        npxCmd = first
+      } else {
+        useShell = true  // fallback to shell
+      }
+    } catch {
+      useShell = true  // fallback to shell
+    }
+  }
+
+  const proc = spawn(npxCmd, args, {
     stdio: ['ignore', 'pipe', 'pipe'],
-    shell: isWin,  // required on Windows to find and execute npx.cmd
+    shell: useShell,
     env: { ...process.env },
   })
 
