@@ -529,27 +529,41 @@ export function ChatInput() {
             </Button>
           )}
         </div>
-        <div className="mt-2 flex items-center justify-between">
-          <div className="flex items-center gap-2 text-xs text-muted-foreground">
+        <div className="mt-2 flex items-center justify-between gap-3">
+          <div className="flex items-center gap-2 text-xs text-muted-foreground shrink-0">
             <Sparkles className="h-3 w-3" />
             <span>
               {useChatStore.getState().mcpServers.filter((s) => s.enabled).length} MCP tool(s) active
             </span>
           </div>
-          <div className="flex items-center gap-3 text-xs text-muted-foreground">
+          <div className="flex-1 flex items-center justify-end gap-2 text-xs text-muted-foreground min-w-0">
             {(() => {
               const ctxLen = modelContextLengths[selectedModel]
               if (!lastTokenUsage || !ctxLen) return null
               const pct = Math.min(100, (lastTokenUsage.promptTokens / ctxLen) * 100)
-              const color = pct > 80 ? 'text-red-500' : pct > 50 ? 'text-yellow-500' : 'text-emerald-500'
+              const color = pct > 80 ? 'bg-red-500' : pct > 50 ? 'bg-yellow-500' : 'bg-emerald-500'
+              const textColor = pct > 80 ? 'text-red-500' : pct > 50 ? 'text-yellow-500' : 'text-emerald-500'
               const fmt = (n: number) => n >= 1000 ? `${(n / 1000).toFixed(1)}k` : String(n)
               return (
-                <span className={`font-medium ${color}`} title={`Prompt: ${lastTokenUsage.promptTokens} / Completion: ${lastTokenUsage.completionTokens} / Context: ${ctxLen}`}>
-                  {fmt(lastTokenUsage.promptTokens)}/{fmt(ctxLen)} ctx ({pct.toFixed(0)}%)
-                </span>
+                <div className="flex items-center gap-2 min-w-0" title={`Prompt: ${lastTokenUsage.promptTokens} / Completion: ${lastTokenUsage.completionTokens} / Context window: ${ctxLen}`}>
+                  {/* Progress bar */}
+                  <div className="h-1.5 w-20 sm:w-28 rounded-full bg-muted overflow-hidden shrink-0">
+                    <div
+                      className={`h-full ${color} transition-all duration-300`}
+                      style={{ width: `${pct}%` }}
+                    />
+                  </div>
+                  {/* Percentage + detail */}
+                  <span className={`font-medium ${textColor} tabular-nums shrink-0`}>
+                    {pct.toFixed(0)}%
+                  </span>
+                  <span className="hidden sm:inline text-muted-foreground/70 truncate">
+                    ({fmt(lastTokenUsage.promptTokens)}/{fmt(ctxLen)})
+                  </span>
+                </div>
               )
             })()}
-            <p>Connected to your local LM Studio server</p>
+            <p className="hidden md:inline shrink-0">Connected to LM Studio</p>
           </div>
         </div>
       </div>

@@ -142,6 +142,7 @@ export async function POST(request: NextRequest) {
       temperature: temp,
       max_tokens: maxTokensVal,
       stream: true,
+      stream_options: { include_usage: true },
     }
 
     if (selectedModel) requestBody.model = selectedModel
@@ -215,6 +216,9 @@ export async function POST(request: NextRequest) {
               temperature: temp,
               max_tokens: maxTokensVal,
               stream: true,
+              // Ask LM Studio to include token usage in the final stream chunk.
+              // Without this, the usage object is never sent during streaming.
+              stream_options: { include_usage: true },
             }
             if (selectedModel) roundBody.model = selectedModel
             if (mcpToolList.length > 0) {

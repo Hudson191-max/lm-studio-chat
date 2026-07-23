@@ -304,14 +304,25 @@ export default function AdminPage() {
                               <TableHead>Role</TableHead>
                               <TableHead>Chats</TableHead>
                               <TableHead>Messages</TableHead>
-                              <TableHead>Today (msgs/tokens)</TableHead>
-                              <TableHead>Daily Limits (msgs/tokens)</TableHead>
+                              <TableHead>Daily Usage</TableHead>
                               <TableHead>Created</TableHead>
                               <TableHead className="w-10"></TableHead>
                             </TableRow>
                           </TableHeader>
                           <TableBody>
-                            {stats.users.map((user) => (
+                            {stats.users.map((user) => {
+                              // Single combined usage indicator
+                              const msgLimit = user.dailyMessageLimit
+                              const tokLimit = user.dailyTokenLimit
+                              const msgs = user.todayUsage.messages
+                              const toks = user.todayUsage.totalTokens
+                              const msgPct = msgLimit ? Math.min(100, (msgs / msgLimit) * 100) : 0
+                              const tokPct = tokLimit ? Math.min(100, (toks / tokLimit) * 100) : 0
+                              const maxPct = Math.max(msgPct, tokPct)
+                              const barColor = maxPct >= 100 ? 'bg-red-500' : maxPct > 80 ? 'bg-yellow-500' : 'bg-emerald-500'
+                              const fmt = (n: number) => n >= 1000 ? `${(n / 1000).toFixed(1)}k` : String(n)
+
+                              return (
                               <TableRow key={user.id}>
                                 <TableCell className="font-medium">{user.username}</TableCell>
                                 <TableCell>
@@ -326,44 +337,59 @@ export default function AdminPage() {
                                 <TableCell>{user._count.conversations}</TableCell>
                                 <TableCell>{user.messageCount}</TableCell>
                                 <TableCell className="text-xs">
-                                  {user.todayUsage.messages}
-                                  {' / '}
-                                  {user.todayUsage.totalTokens.toLocaleString()}
-                                </TableCell>
-                                <TableCell className="text-xs">
                                   {user.role === 'admin' ? (
                                     <span className="text-muted-foreground">exempt</span>
                                   ) : (
-                                    <div className="flex items-center gap-1">
-                                      <Input
-                                        type="number"
-                                        min={0}
-                                        placeholder="∞"
-                                        defaultValue={user.dailyMessageLimit ?? ''}
-                                        onBlur={(e) => {
-                                          const v = e.target.value === '' ? null : parseInt(e.target.value, 10)
-                                          if (v !== user.dailyMessageLimit && (v === null || (!isNaN(v) && v >= 0))) {
-                                            updateLimits(user.id, { dailyMessageLimit: v })
-                                          }
-                                        }}
-                                        className="h-6 w-16 px-1 text-xs"
-                                        title="Daily message limit (empty = unlimited)"
-                                      />
-                                      <span className="text-muted-foreground">/</span>
-                                      <Input
-                                        type="number"
-                                        min={0}
-                                        placeholder="∞"
-                                        defaultValue={user.dailyTokenLimit ?? ''}
-                                        onBlur={(e) => {
-                                          const v = e.target.value === '' ? null : parseInt(e.target.value, 10)
-                                          if (v !== user.dailyTokenLimit && (v === null || (!isNaN(v) && v >= 0))) {
-                                            updateLimits(user.id, { dailyTokenLimit: v })
-                                          }
-                                        }}
-                                        className="h-6 w-20 px-1 text-xs"
-                                        title="Daily token limit (empty = unlimited)"
-                                      />
+                                    <div className="space-y-1 min-w-[140px]">
+                                      {/* Messages row */}
+                                      <div className="flex items-center gap-1.5">
+                                        <div className="h-1.5 flex-1 rounded-full bg-muted overflow-hidden">
+                                          <div className={`h-full ${barColor} transition-all`} style={{ width: `${msgPct}%` }} />
+                                        </div>
+                                        <span className="tabular-nums whitespace-nowrap">
+                                          {msgs}{msgLimit ? `/${msgLimit}` : ''} msg
+                                        </span>
+                                      </div>
+                                      {/* Tokens row */}
+                                      <div className="flex items-center gap-1.5">
+                                        <div className="h-1.5 flex-1 rounded-full bg-muted overflow-hidden">
+                                          <div className={`h-full ${barColor} transition-all`} style={{ width: `${tokPct}%` }} />
+                                        </div>
+                                        <span className="tabular-nums whitespace-nowrap">
+                                          {fmt(toks)}{tokLimit ? `/${fmt(tokLimit)}` : ''} tok
+                                        </span>
+                                      </div>
+                                      {/* Inline limit editor */}
+                                      <div className="flex items-center gap-1 pt-0.5">
+                                        <Input
+                                          type="number"
+                                          min={0}
+                                          placeholder="msg ∞"
+                                          defaultValue={user.dailyMessageLimit ?? ''}
+                                          onBlur={(e) => {
+                                            const v = e.target.value === '' ? null : parseInt(e.target.value, 10)
+                                            if (v !== user.dailyMessageLimit && (v === null || (!isNaN(v) && v >= 0))) {
+                                              updateLimits(user.id, { dailyMessageLimit: v })
+                                            }
+                                          }}
+                                          className="h-5 w-16 px-1 text-[10px]"
+                                          title="Daily message limit (empty = unlimited)"
+                                        />
+                                        <Input
+                                          type="number"
+                                          min={0}
+                                          placeholder="tok ∞"
+                                          defaultValue={user.dailyTokenLimit ?? ''}
+                                          onBlur={(e) => {
+                                            const v = e.target.value === '' ? null : parseInt(e.target.value, 10)
+                                            if (v !== user.dailyTokenLimit && (v === null || (!isNaN(v) && v >= 0))) {
+                                              updateLimits(user.id, { dailyTokenLimit: v })
+                                            }
+                                          }}
+                                          className="h-5 w-20 px-1 text-[10px]"
+                                          title="Daily token limit (empty = unlimited)"
+                                        />
+                                      </div>
                                     </div>
                                   )}
                                 </TableCell>
@@ -399,7 +425,8 @@ export default function AdminPage() {
                                   )}
                                 </TableCell>
                               </TableRow>
-                            ))}
+                              )
+                            })}
                           </TableBody>
                         </Table>
                       </ScrollArea>
