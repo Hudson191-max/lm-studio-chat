@@ -27,6 +27,7 @@ import {
 } from '@/components/ui/table'
 import { ScrollArea } from '@/components/ui/scroll-area'
 import { useChatStore } from '@/store/chat-store'
+import { formatTokens } from '@/lib/format'
 
 interface UserRow {
   id: string
@@ -320,7 +321,6 @@ export default function AdminPage() {
                               const tokPct = tokLimit ? Math.min(100, (toks / tokLimit) * 100) : 0
                               const maxPct = Math.max(msgPct, tokPct)
                               const barColor = maxPct >= 100 ? 'bg-red-500' : maxPct > 80 ? 'bg-yellow-500' : 'bg-emerald-500'
-                              const fmt = (n: number) => n >= 1000 ? `${(n / 1000).toFixed(1)}k` : String(n)
 
                               return (
                               <TableRow key={user.id}>
@@ -356,7 +356,7 @@ export default function AdminPage() {
                                           <div className={`h-full ${barColor} transition-all`} style={{ width: `${tokPct}%` }} />
                                         </div>
                                         <span className="tabular-nums whitespace-nowrap">
-                                          {fmt(toks)}{tokLimit ? `/${fmt(tokLimit)}` : ''} tok
+                                          {formatTokens(toks)}{tokLimit ? `/${formatTokens(tokLimit)}` : ''} tok
                                         </span>
                                       </div>
                                       {/* Inline limit editor */}

@@ -350,6 +350,7 @@ export function ChatInput() {
       setIsStreaming(false)
       setStreamingContent('')
       useChatStore.getState().setStreamingThinking('')
+      useChatStore.getState().setToolCallEntries([])  // clear tool call bubbles
       abortControllerRef.current = null
       // Notify other components (e.g. page.tsx) that a message completed
       // so they can refetch quota / usage data.

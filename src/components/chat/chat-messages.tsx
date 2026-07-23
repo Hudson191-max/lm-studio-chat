@@ -215,8 +215,10 @@ export function ChatMessages() {
           />
         )}
 
-        {/* Tool call blocks — shown while streaming (during tool execution rounds) */}
-        {toolCallEntries.length > 0 && (
+        {/* Tool call blocks — only shown while streaming (during tool execution rounds).
+            Once streaming ends, tool call info is stored on the message and shown via
+            the "N tool calls" indicator on the message bubble. */}
+        {isStreaming && toolCallEntries.length > 0 && (
           <div className="space-y-1">
             {toolCallEntries.map((entry, idx) => (
               <ToolCallBlock key={`${entry.name}-${entry.timestamp}-${idx}`} entry={entry} />
