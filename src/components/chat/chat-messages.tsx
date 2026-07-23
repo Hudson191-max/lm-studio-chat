@@ -2,19 +2,24 @@
 
 import { useEffect, useRef, useCallback, useState } from 'react'
 import { useChatStore } from '@/store/chat-store'
-import { Bot, User, Loader2, RefreshCw, Pencil, Check, X, Wrench, Brain, ChevronDown, ChevronRight, Image as ImageIcon, FileText, GitBranch } from 'lucide-react'
+import { Bot, User, Loader2, RefreshCw, Pencil, Check, X, Wrench, Brain, ChevronDown, ChevronRight, Image as ImageIcon, FileText, GitBranch, ArrowDown, Copy } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Textarea } from '@/components/ui/textarea'
 import { MarkdownContent } from '@/components/chat/markdown-content'
+import { ToolCallBlock } from '@/components/chat/tool-call-block'
 
 export function ChatMessages() {
   const messages = useChatStore((s) => s.messages)
   const streamingContent = useChatStore((s) => s.streamingContent)
   const streamingThinking = useChatStore((s) => s.streamingThinking)
   const isStreaming = useChatStore((s) => s.isStreaming)
+  const toolCallEntries = useChatStore((s) => s.toolCallEntries)
   const scrollRef = useRef<HTMLDivElement>(null)
   const [editingId, setEditingId] = useState<string | null>(null)
   const [editContent, setEditContent] = useState('')
+  // Track whether the user has scrolled up away from the bottom — if so,
+  // pause auto-scroll so streaming doesn't yank them back down.
+  const [userScrolledUp, setUserScrolledUp] = useState(false)
 
   const scrollToBottom = useCallback(() => {
     if (scrollRef.current) {
@@ -22,9 +27,58 @@ export function ChatMessages() {
     }
   }, [])
 
+  // Scroll listener: detect when user scrolls up > 80px from the bottom
   useEffect(() => {
+    const el = scrollRef.current
+    if (!el) return
+    let raf = 0
+    const onScroll = () => {
+      cancelAnimationFrame(raf)
+      raf = requestAnimationFrame(() => {
+        const distanceFromBottom = el.scrollHeight - el.scrollTop - el.clientHeight
+        setUserScrolledUp(distanceFromBottom > 80)
+      })
+    }
+    el.addEventListener('scroll', onScroll, { passive: true })
+    return () => {
+      el.removeEventListener('scroll', onScroll)
+      cancelAnimationFrame(raf)
+    }
+  }, [])
+
+  // Auto-scroll on new content, but only if the user hasn't scrolled up
+  useEffect(() => {
+    if (userScrolledUp) return
     scrollToBottom()
-  }, [messages, streamingContent, streamingThinking, scrollToBottom])
+  }, [messages, streamingContent, streamingThinking, scrollToBottom, userScrolledUp])
+
+  // When a brand new user message is sent (messages count grows and the last
+  // is from the user), always snap to bottom — they just submitted, they want
+  // to see the response.
+  const prevMsgCount = useRef(messages.length)
+  useEffect(() => {
+    if (messages.length > prevMsgCount.current) {
+      const lastMsg = messages[messages.length - 1]
+      if (lastMsg?.role === 'user') {
+        setUserScrolledUp(false)
+        scrollToBottom()
+      }
+    }
+    prevMsgCount.current = messages.length
+  }, [messages, scrollToBottom])
+
+  // When streaming ends, if user is scrolled up, keep them there (don't yank).
+  // If they're at the bottom, ensure we're snapped to bottom.
+  useEffect(() => {
+    if (!isStreaming && !userScrolledUp) {
+      scrollToBottom()
+    }
+  }, [isStreaming, userScrolledUp, scrollToBottom])
+
+  const jumpToLatest = () => {
+    setUserScrolledUp(false)
+    scrollToBottom()
+  }
 
   const startEdit = (msg: typeof messages[0]) => {
     setEditingId(msg.id)
@@ -111,24 +165,25 @@ export function ChatMessages() {
   }
 
   return (
-    <div
-      ref={scrollRef}
-      className="flex-1 overflow-y-auto px-4 py-6"
-      style={{ scrollbarWidth: 'thin', scrollbarColor: 'var(--border) transparent' }}
-    >
-      <div className="mx-auto max-w-3xl space-y-6">
-        {messages.length === 0 && !isStreaming && (
-          <div className="flex flex-col items-center justify-center py-24 text-center">
-            <div className="mb-4 flex h-16 w-16 items-center justify-center rounded-2xl bg-primary/10">
-              <Bot className="h-8 w-8 text-primary" />
+    <div className="relative flex-1 min-h-0">
+      <div
+        ref={scrollRef}
+        className="absolute inset-0 overflow-y-auto px-4 py-6"
+        style={{ scrollbarWidth: 'thin', scrollbarColor: 'var(--border) transparent' }}
+      >
+        <div className="mx-auto max-w-3xl space-y-6">
+          {messages.length === 0 && !isStreaming && (
+            <div className="flex flex-col items-center justify-center py-24 text-center">
+              <div className="mb-4 flex h-16 w-16 items-center justify-center rounded-2xl bg-primary/10">
+                <Bot className="h-8 w-8 text-primary" />
+              </div>
+              <h2 className="text-xl font-semibold">Chat with your Local AI</h2>
+              <p className="mt-2 max-w-md text-sm text-muted-foreground">
+                Start a conversation with your LM Studio model. Make sure LM Studio is running with the local server enabled.
+                You can paste or drag images for vision models.
+              </p>
             </div>
-            <h2 className="text-xl font-semibold">Chat with your Local AI</h2>
-            <p className="mt-2 max-w-md text-sm text-muted-foreground">
-              Start a conversation with your LM Studio model. Make sure LM Studio is running with the local server enabled.
-              You can paste or drag images for vision models.
-            </p>
-          </div>
-        )}
+          )}
 
         {messages.map((msg, idx) => (
           <MessageBubble
@@ -160,6 +215,15 @@ export function ChatMessages() {
           />
         )}
 
+        {/* Tool call blocks — shown while streaming (during tool execution rounds) */}
+        {toolCallEntries.length > 0 && (
+          <div className="space-y-1">
+            {toolCallEntries.map((entry, idx) => (
+              <ToolCallBlock key={`${entry.name}-${entry.timestamp}-${idx}`} entry={entry} />
+            ))}
+          </div>
+        )}
+
         {isStreaming && !streamingContent && !streamingThinking && (
           <div className="flex gap-3">
             <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-primary/10">
@@ -172,6 +236,18 @@ export function ChatMessages() {
           </div>
         )}
       </div>
+      </div>
+      {/* Floating "Jump to latest" button — appears when user has scrolled up during streaming */}
+      {userScrolledUp && (
+        <button
+          onClick={jumpToLatest}
+          className="absolute bottom-4 left-1/2 -translate-x-1/2 z-10 flex items-center gap-1.5 rounded-full bg-primary text-primary-foreground px-3 py-1.5 text-xs font-medium shadow-lg hover:bg-primary/90 transition-colors"
+          title="Jump to latest"
+        >
+          <ArrowDown className="h-3.5 w-3.5" />
+          Jump to latest
+        </button>
+      )}
     </div>
   )
 }
@@ -341,6 +417,8 @@ function MessageBubble({
       {/* Action buttons */}
       {!isStreaming && (
         <div className={`flex gap-1 mt-1 ${isUser ? 'justify-end pr-12' : 'pl-12'}`}>
+          {/* Copy button — always available on both user and assistant messages */}
+          <CopyButton content={message.content} />
           {isUser && onEdit && (
             <Button
               variant="ghost"
@@ -385,5 +463,50 @@ function MessageBubble({
         </div>
       )}
     </div>
+  )
+}
+
+/**
+ * Copy button with clipboard fallback for non-HTTPS contexts.
+ * Shows a Check icon for 2 seconds after copying.
+ * On mobile (no hover), the button is always visible at reduced opacity.
+ */
+function CopyButton({ content }: { content: string }) {
+  const [copied, setCopied] = useState(false)
+
+  const handleCopy = async () => {
+    try {
+      await navigator.clipboard.writeText(content)
+      setCopied(true)
+      setTimeout(() => setCopied(false), 2000)
+    } catch {
+      // Fallback for non-HTTPS contexts (e.g. Cloudflare tunnel without SSL)
+      try {
+        const textarea = document.createElement('textarea')
+        textarea.value = content
+        textarea.style.position = 'fixed'
+        textarea.style.opacity = '0'
+        document.body.appendChild(textarea)
+        textarea.select()
+        document.execCommand('copy')
+        document.body.removeChild(textarea)
+        setCopied(true)
+        setTimeout(() => setCopied(false), 2000)
+      } catch {
+        // last-resort: do nothing
+      }
+    }
+  }
+
+  return (
+    <Button
+      variant="ghost"
+      size="icon"
+      className="h-6 w-6 opacity-0 group-hover:opacity-100 max-md:opacity-60 transition-opacity"
+      onClick={handleCopy}
+      title={copied ? 'Copied!' : 'Copy message'}
+    >
+      {copied ? <Check className="h-3 w-3 text-emerald-500" /> : <Copy className="h-3 w-3" />}
+    </Button>
   )
 }

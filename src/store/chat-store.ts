@@ -81,6 +81,27 @@ interface ChatState {
     totalTokens: number
   } | null
 
+  // Per-user daily quota (fetched from /api/usage)
+  userQuota: {
+    exempt: boolean
+    hasLimits: boolean
+    limits: { dailyMessageLimit: number | null; dailyTokenLimit: number | null }
+    current: { messages: number; promptTokens: number; completionTokens: number; totalTokens: number }
+  } | null
+
+  // Tool call entries for the current streaming round — rendered as
+  // collapsible ToolCallBlock components below the streaming message.
+  // Cleared when a new message starts streaming or conversation switches.
+  toolCallEntries: Array<{
+    id?: string
+    name: string
+    args?: Record<string, unknown>
+    content?: string
+    isError?: boolean
+    isExecuting?: boolean
+    timestamp: number
+  }>
+
   // UI
   sidebarOpen: boolean
   settingsOpen: boolean
@@ -129,6 +150,19 @@ interface ChatState {
   // Actions - Token usage
   setLastTokenUsage: (usage: { promptTokens: number; completionTokens: number; totalTokens: number } | null) => void
 
+  // Actions - User quota
+  setUserQuota: (quota: {
+    exempt: boolean
+    hasLimits: boolean
+    limits: { dailyMessageLimit: number | null; dailyTokenLimit: number | null }
+    current: { messages: number; promptTokens: number; completionTokens: number; totalTokens: number }
+  } | null) => void
+
+  // Actions - Tool call entries
+  setToolCallEntries: (entries: Array<{ id?: string; name: string; args?: Record<string, unknown>; content?: string; isError?: boolean; isExecuting?: boolean; timestamp: number }>) => void
+  addToolCallEntry: (entry: { id?: string; name: string; args?: Record<string, unknown>; content?: string; isError?: boolean; isExecuting?: boolean; timestamp: number }) => void
+  updateToolCallEntry: (name: string, updates: { content?: string; isError?: boolean; isExecuting?: boolean }) => void
+
   // Actions - UI
   setSidebarOpen: (open: boolean) => void
   setSettingsOpen: (open: boolean) => void
@@ -168,6 +202,8 @@ export const useChatStore = create<ChatState>((set) => ({
   selectedModel: '',
   connectionError: null,
   lastTokenUsage: null,
+  userQuota: null,
+  toolCallEntries: [],
 
   sidebarOpen: true,
   settingsOpen: false,
@@ -226,7 +262,7 @@ export const useChatStore = create<ChatState>((set) => ({
   appendStreamingThinking: (content) =>
     set((state) => ({ streamingThinking: state.streamingThinking + content })),
   setIsStreaming: (streaming) => set({ isStreaming: streaming }),
-  clearCurrentChat: () => set({ messages: [], streamingContent: '', streamingThinking: '', streamingToolCalls: [] }),
+  clearCurrentChat: () => set({ messages: [], streamingContent: '', streamingThinking: '', streamingToolCalls: [], toolCallEntries: [] }),
 
   setConnected: (connected) => set({ isConnected: connected }),
   setAvailableModels: (models) => set({ availableModels: models }),
@@ -234,6 +270,16 @@ export const useChatStore = create<ChatState>((set) => ({
   setSelectedModel: (model) => set({ selectedModel: model }),
   setConnectionError: (error) => set({ connectionError: error }),
   setLastTokenUsage: (usage) => set({ lastTokenUsage: usage }),
+  setUserQuota: (quota) => set({ userQuota: quota }),
+  setToolCallEntries: (entries) => set({ toolCallEntries: entries }),
+  addToolCallEntry: (entry) => set((state) => ({ toolCallEntries: [...state.toolCallEntries, entry] })),
+  updateToolCallEntry: (name, updates) => set((state) => ({
+    toolCallEntries: state.toolCallEntries.map((e, i) =>
+      i === state.toolCallEntries.length - 1 && e.name === name && e.isExecuting
+        ? { ...e, ...updates }
+        : e
+    ),
+  })),
 
   setSidebarOpen: (open) => set({ sidebarOpen: open }),
   setSettingsOpen: (open) => set({ settingsOpen: open }),

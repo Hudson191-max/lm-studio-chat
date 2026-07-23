@@ -11,12 +11,14 @@ import { Label } from '@/components/ui/label'
 import { Slider } from '@/components/ui/slider'
 import { Switch } from '@/components/ui/switch'
 import { Plus, Trash2, Loader2, Star } from 'lucide-react'
+import { useToast } from '@/hooks/use-toast'
 
 export function ProfilesDialog() {
   const profilesOpen = useChatStore((s) => s.profilesOpen)
   const setProfilesOpen = useChatStore((s) => s.setProfilesOpen)
   const profiles = useChatStore((s) => s.profiles)
   const setProfiles = useChatStore((s) => s.setProfiles)
+  const { toast } = useToast()
 
   const [name, setName] = useState('')
   const [url, setUrl] = useState('http://localhost:1234/v1')
@@ -49,6 +51,7 @@ export function ProfilesDialog() {
       setName('')
       setModel('')
       setIsDefault(false)
+      toast({ title: 'Profile created', description: `"${profile.name}" is ready to use.` })
     } catch { /* silent */ } finally {
       setIsSaving(false)
     }
@@ -58,6 +61,7 @@ export function ProfilesDialog() {
     try {
       await fetch(`/api/profiles/${id}`, { method: 'DELETE' })
       setProfiles(profiles.filter((p) => p.id !== id))
+      toast({ title: 'Profile deleted' })
     } catch { /* silent */ }
   }
 

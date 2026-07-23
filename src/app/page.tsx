@@ -1,6 +1,6 @@
 'use client'
 
-import { useEffect } from 'react'
+import { useEffect, useCallback } from 'react'
 import { useSession, signOut } from 'next-auth/react'
 import { useChatStore } from '@/store/chat-store'
 import { Sidebar } from '@/components/chat/sidebar'
@@ -14,7 +14,7 @@ import { ChangePasswordDialog } from '@/components/chat/change-password-dialog'
 import { SystemPromptBar } from '@/components/chat/system-prompt-bar'
 import { AuthView } from '@/components/chat/auth-view'
 import { Button } from '@/components/ui/button'
-import { Menu, WifiOff, RefreshCw, LogOut, Loader2 } from 'lucide-react'
+import { Menu, WifiOff, RefreshCw, LogOut, Loader2, Cpu } from 'lucide-react'
 
 export default function Home() {
   const { data: session, status } = useSession()
@@ -31,6 +31,27 @@ export default function Home() {
   const setModelContextLengths = useChatStore((s) => s.setModelContextLengths)
   const setSelectedModel = useChatStore((s) => s.setSelectedModel)
   const setConnected = useChatStore((s) => s.setConnected)
+  const setUserQuota = useChatStore((s) => s.setUserQuota)
+  const availableModels = useChatStore((s) => s.availableModels)
+  const selectedModel = useChatStore((s) => s.selectedModel)
+
+  // Persist model selection to settings so it survives page reload
+  const handleModelChange = useCallback((modelId: string) => {
+    setSelectedModel(modelId)
+    fetch('/api/settings', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ key: 'lmStudioModel', value: modelId }),
+    }).catch(() => {})
+  }, [setSelectedModel])
+
+  // Fetch the current user's daily quota (for the footer indicator)
+  const fetchQuota = useCallback(() => {
+    fetch('/api/usage')
+      .then((res) => res.ok ? res.json() : null)
+      .then((data) => { if (data) setUserQuota(data) })
+      .catch(() => {})
+  }, [setUserQuota])
 
   // Load conversations when authenticated
   useEffect(() => {
@@ -70,7 +91,17 @@ export default function Home() {
         }
       })
       .catch(() => {})
-  }, [status, setConversations, setIsLoadingConversations, setMcpServers, setAvailableModels, setModelContextLengths, setSelectedModel, setConnected])
+
+    // Fetch the user's daily quota (for the footer indicator)
+    fetchQuota()
+  }, [status, setConversations, setIsLoadingConversations, setMcpServers, setAvailableModels, setModelContextLengths, setSelectedModel, setConnected, fetchQuota])
+
+  // Re-fetch quota after each message completes (streaming ends)
+  useEffect(() => {
+    const handler = () => fetchQuota()
+    window.addEventListener('chat:messageComplete', handler)
+    return () => window.removeEventListener('chat:messageComplete', handler)
+  }, [fetchQuota])
 
   // Register service worker for PWA
   useEffect(() => {
@@ -120,6 +151,22 @@ export default function Home() {
           </div>
 
           <div className="flex items-center gap-1">
+            {/* Model selector — quick switch without opening Settings */}
+            {availableModels.length > 0 && (
+              <div className="flex items-center gap-1 mr-1 max-w-[200px]">
+                <Cpu className="h-3.5 w-3.5 text-muted-foreground shrink-0 hidden sm:inline" />
+                <select
+                  value={selectedModel}
+                  onChange={(e) => handleModelChange(e.target.value)}
+                  className="h-8 max-w-[160px] sm:max-w-[200px] truncate rounded-md border border-input bg-background px-2 text-xs hover:bg-accent focus:outline-none focus:ring-1 focus:ring-ring cursor-pointer"
+                  title="Switch model"
+                >
+                  {availableModels.map((m) => (
+                    <option key={m} value={m}>{m}</option>
+                  ))}
+                </select>
+              </div>
+            )}
             <span className="mr-2 hidden text-xs text-muted-foreground sm:inline">
               {session.user?.username}
             </span>

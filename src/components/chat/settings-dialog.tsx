@@ -14,6 +14,8 @@ import {
 } from '@/components/ui/select'
 import { Slider } from '@/components/ui/slider'
 import { Wifi, WifiOff, RefreshCw, Loader2, Sun, Moon, Monitor, Info } from 'lucide-react'
+import { formatTokens as formatTokenCount } from '@/lib/format'
+import { useToast } from '@/hooks/use-toast'
 
 interface ModelInfo {
   id: string
@@ -23,15 +25,10 @@ interface ModelInfo {
 const DEFAULT_MAX_TOKENS = 2048
 const MIN_TOKENS = 256
 
-function formatTokenCount(n: number): string {
-  if (n >= 1000000) return `${(n / 1000000).toFixed(1)}M`
-  if (n >= 1000) return `${Math.round(n / 1000)}k`
-  return String(n)
-}
-
 export function SettingsDialog() {
   const settingsOpen = useChatStore((s) => s.settingsOpen)
   const setSettingsOpen = useChatStore((s) => s.setSettingsOpen)
+  const { toast } = useToast()
   const isConnected = useChatStore((s) => s.isConnected)
   const availableModels = useChatStore((s) => s.availableModels)
   const selectedModel = useChatStore((s) => s.selectedModel)
@@ -129,6 +126,7 @@ export function SettingsDialog() {
       )
       setSaved(true)
       setTimeout(() => setSaved(false), 2000)
+      toast({ title: 'Settings saved', description: 'LM Studio connection updated.' })
       await checkConnection()
     } catch { /* silent */ } finally {
       setIsSaving(false)

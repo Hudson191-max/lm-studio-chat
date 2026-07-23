@@ -10,6 +10,7 @@ import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { Switch } from '@/components/ui/switch'
 import { Plus, Trash2, Loader2, RefreshCw, Wrench, Plug, Search, CheckCircle2, XCircle } from 'lucide-react'
+import { useToast } from '@/hooks/use-toast'
 
 const HOUND_URL = 'http://127.0.0.1:8765/mcp'
 type HoundStatus = 'checking' | 'running' | 'not-running'
@@ -19,6 +20,7 @@ export function McpDialog() {
   const setMcpOpen = useChatStore((s) => s.setMcpOpen)
   const mcpServers = useChatStore((s) => s.mcpServers)
   const setMcpServers = useChatStore((s) => s.setMcpServers)
+  const { toast } = useToast()
 
   const [name, setName] = useState('')
   const [url, setUrl] = useState('')
@@ -81,6 +83,35 @@ export function McpDialog() {
   useEffect(() => {
     setHoundAlreadyAdded(mcpServers.some((s) => s.url === HOUND_URL))
   }, [mcpServers])
+
+  // Auto-refresh: re-probe Hound status + any 0-tool servers every 15 seconds
+  // while the dialog is open. Stops when dialog closes or all servers have tools.
+  useEffect(() => {
+    if (!mcpOpen) return
+    const interval = setInterval(async () => {
+      // Re-probe Hound if it's not running yet
+      if (houndStatus === 'not-running') {
+        probeHound()
+      }
+      // Re-probe any MCP server with 0 tools (it may have just started up)
+      for (const server of mcpServers) {
+        if (server.tools && server.tools.length === 0) {
+          try {
+            const res = await fetch(`/api/mcp/probe?url=${encodeURIComponent(server.url)}`)
+            const data = await res.json()
+            if (data.reachable && data.toolCount > 0) {
+              // Found tools — refresh this server's stored tools via the refresh endpoint
+              await fetch(`/api/mcp/${server.id}`, { method: 'POST' })
+              loadServers()  // reload the list to show the discovered tools
+            }
+          } catch {
+            // ignore — will retry next interval
+          }
+        }
+      }
+    }, 15000)
+    return () => clearInterval(interval)
+  }, [mcpOpen, mcpServers, houndStatus])
 
   const addServer = async () => {
     if (!name.trim() || !url.trim() || isAdding) return
@@ -150,6 +181,12 @@ export function McpDialog() {
       const res = await fetch(`/api/mcp/${id}`, { method: 'POST' })
       const server = await res.json()
       setMcpServers(mcpServers.map((s) => (s.id === id ? server : s)))
+      const toolCount = server.tools?.length || 0
+      if (res.ok) {
+        toast({ title: 'Tools refreshed', description: `${toolCount} tool(s) discovered.` })
+      } else {
+        toast({ title: 'Refresh failed', description: server.error || 'Could not reach the server.', variant: 'destructive' })
+      }
     } catch { /* silent */ } finally {
       setRefreshing(null)
     }
@@ -159,6 +196,7 @@ export function McpDialog() {
     try {
       await fetch(`/api/mcp/${id}`, { method: 'DELETE' })
       setMcpServers(mcpServers.filter((s) => s.id !== id))
+      toast({ title: 'MCP server removed' })
     } catch { /* silent */ }
   }
 

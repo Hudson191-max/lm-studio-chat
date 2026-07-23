@@ -5,6 +5,7 @@ import { useChatStore, AttachedFile } from '@/store/chat-store'
 import { SendHorizontal, Square, Download, Sparkles, ImagePlus, X, FileText, Loader2 } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Textarea } from '@/components/ui/textarea'
+import { formatTokens } from '@/lib/format'
 
 function fileToBase64(file: File): Promise<string> {
   return new Promise((resolve, reject) => {
@@ -46,6 +47,7 @@ export function ChatInput() {
   const mcpServers = useChatStore((s) => s.mcpServers)
   const lastTokenUsage = useChatStore((s) => s.lastTokenUsage)
   const modelContextLengths = useChatStore((s) => s.modelContextLengths)
+  const userQuota = useChatStore((s) => s.userQuota)
 
   const addMessage = useChatStore((s) => s.addMessage)
   const setStreamingContent = useChatStore((s) => s.setStreamingContent)
@@ -220,6 +222,7 @@ export function ChatInput() {
     setIsStreaming(true)
     setStreamingContent('')
     useChatStore.getState().setStreamingThinking('')
+    useChatStore.getState().setToolCallEntries([])  // clear previous tool calls
     setConnectionError(null)
 
     if (textareaRef.current) textareaRef.current.style.height = 'auto'
@@ -288,19 +291,25 @@ export function ChatInput() {
             }
             if (parsed.toolCalls) {
               useChatStore.getState().setStreamingToolCalls(parsed.toolCalls)
-              // Show a brief status that tools are being called
-              appendStreamingContent(`\n\n> 🔧 Calling tool: ${parsed.toolCalls.map((tc: { function?: { name?: string } }) => tc.function?.name).filter(Boolean).join(', ')}...\n\n`)
+              // Don't append text status — the ToolCallBlock UI handles display
             }
             if (parsed.toolExecuting) {
-              appendStreamingContent(`\n⏳ Executing \`${parsed.toolExecuting.name}\`...\n`)
+              // Add a new "executing" entry to the tool call list
+              useChatStore.getState().addToolCallEntry({
+                name: parsed.toolExecuting.name,
+                args: parsed.toolExecuting.args,
+                isExecuting: true,
+                timestamp: Date.now(),
+              })
             }
             if (parsed.toolResult) {
               const tr = parsed.toolResult
-              if (tr.isError) {
-                appendStreamingContent(`\n❌ \`${tr.name}\` failed: ${typeof tr.content === 'string' ? tr.content.slice(0, 300) : ''}\n\n`)
-              } else {
-                appendStreamingContent(`\n✅ \`${tr.name}\` returned ${typeof tr.content === 'string' ? tr.content.length : 0} chars\n\n`)
-              }
+              // Update the most recent "executing" entry with this tool's result
+              useChatStore.getState().updateToolCallEntry(tr.name, {
+                content: typeof tr.content === 'string' ? tr.content : '',
+                isError: !!tr.isError,
+                isExecuting: false,
+              })
             }
             if (parsed.error) {
               setConnectionError(parsed.error)
@@ -342,6 +351,9 @@ export function ChatInput() {
       setStreamingContent('')
       useChatStore.getState().setStreamingThinking('')
       abortControllerRef.current = null
+      // Notify other components (e.g. page.tsx) that a message completed
+      // so they can refetch quota / usage data.
+      window.dispatchEvent(new CustomEvent('chat:messageComplete'))
     }
   }, [input, images, pendingFiles, isStreaming, activeConversationId, selectedModel, messages, currentSystemPrompt, mcpServers, addMessage, setStreamingContent, appendStreamingContent, appendStreamingThinking, setIsStreaming, setConnected, setConnectionError, getMcpTools])
 
@@ -529,52 +541,83 @@ export function ChatInput() {
             </Button>
           )}
         </div>
-        <div className="mt-2 flex items-center justify-between gap-3">
-          <div className="flex items-center gap-2 text-xs text-muted-foreground shrink-0">
+        <div className="mt-2 flex items-center justify-between gap-2 sm:gap-3">
+          {/* MCP tools count — hidden on mobile (< 640px), shown on sm+ */}
+          <div className="hidden sm:flex items-center gap-2 text-xs text-muted-foreground shrink-0">
             <Sparkles className="h-3 w-3" />
             <span>
               {useChatStore.getState().mcpServers.filter((s) => s.enabled).length} MCP tool(s) active
             </span>
           </div>
-          <div className="flex-1 flex items-center justify-end gap-2 text-xs text-muted-foreground min-w-0">
+
+          <div className="flex-1 flex items-center justify-end gap-1.5 sm:gap-2 text-xs text-muted-foreground min-w-0">
             {(() => {
               const ctxLen = modelContextLengths[selectedModel]
-              // If we have usage data, show the progress bar + percentage
+              // Tier 1: have usage + context length → progress bar + percentage
               if (lastTokenUsage && ctxLen) {
                 const pct = Math.min(100, (lastTokenUsage.promptTokens / ctxLen) * 100)
                 const color = pct > 80 ? 'bg-red-500' : pct > 50 ? 'bg-yellow-500' : 'bg-emerald-500'
                 const textColor = pct > 80 ? 'text-red-500' : pct > 50 ? 'text-yellow-500' : 'text-emerald-500'
-                const fmt = (n: number) => n >= 1000 ? `${(n / 1000).toFixed(1)}k` : String(n)
                 return (
-                  <div className="flex items-center gap-2 min-w-0" title={`Prompt: ${lastTokenUsage.promptTokens} / Completion: ${lastTokenUsage.completionTokens} / Context window: ${ctxLen}`}>
-                    <div className="h-1.5 w-20 sm:w-28 rounded-full bg-muted overflow-hidden shrink-0">
+                  <div className="flex items-center gap-1.5 sm:gap-2 min-w-0" title={`Prompt: ${lastTokenUsage.promptTokens.toLocaleString()} / Completion: ${lastTokenUsage.completionTokens.toLocaleString()} / Context window: ${ctxLen.toLocaleString()}`}>
+                    {/* Progress bar: tiny on mobile, wider on tablet/desktop */}
+                    <div className="h-1.5 w-12 sm:w-20 md:w-28 rounded-full bg-muted overflow-hidden shrink-0">
                       <div
                         className={`h-full ${color} transition-all duration-300`}
                         style={{ width: `${pct}%` }}
                       />
                     </div>
+                    {/* Percentage: always shown */}
                     <span className={`font-medium ${textColor} tabular-nums shrink-0`}>
                       {pct.toFixed(0)}%
                     </span>
+                    {/* Detail (1.2k/32k): only on tablet+ */}
                     <span className="hidden sm:inline text-muted-foreground/70 truncate">
-                      ({fmt(lastTokenUsage.promptTokens)}/{fmt(ctxLen)})
+                      ({formatTokens(lastTokenUsage.promptTokens)}/{formatTokens(ctxLen)})
                     </span>
                   </div>
                 )
               }
-              // If we have usage but no context length, just show token counts
+              // Tier 2: have usage but no context length → just token counts
               if (lastTokenUsage) {
-                const fmt = (n: number) => n >= 1000 ? `${(n / 1000).toFixed(1)}k` : String(n)
                 return (
-                  <span className="text-muted-foreground tabular-nums shrink-0" title="Token usage (context window unknown — open Settings to fetch model info)">
-                    {fmt(lastTokenUsage.promptTokens)} prompt · {fmt(lastTokenUsage.completionTokens)} gen
+                  <span className="text-muted-foreground tabular-nums shrink-0 hidden xs:inline sm:inline" title="Token usage (context window unknown — open Settings to fetch model info)">
+                    <span className="sm:hidden">{formatTokens(lastTokenUsage.promptTokens)}</span>
+                    <span className="hidden sm:inline">{formatTokens(lastTokenUsage.promptTokens)} prompt · {formatTokens(lastTokenUsage.completionTokens)} gen</span>
                   </span>
                 )
               }
-              // No usage data yet — show nothing extra, the "Connected" text below is enough
               return null
             })()}
-            <p className="shrink-0">Connected to LM Studio</p>
+            {/* User quota indicator — shown for non-exempt users with limits set */}
+            {(() => {
+              if (!userQuota || userQuota.exempt || !userQuota.hasLimits) return null
+              const { limits, current } = userQuota
+              const msgLimit = limits.dailyMessageLimit
+              const tokLimit = limits.dailyTokenLimit
+              // Show the most relevant limit (messages if set, else tokens)
+              if (msgLimit) {
+                const pct = Math.min(100, (current.messages / msgLimit) * 100)
+                const color = pct >= 100 ? 'text-red-500' : pct > 80 ? 'text-yellow-500' : 'text-muted-foreground'
+                return (
+                  <span className={`tabular-nums shrink-0 ${color}`} title={`Today: ${current.messages}/${msgLimit} messages · ${formatTokens(current.totalTokens)}${tokLimit ? '/' + formatTokens(tokLimit) : ''} tokens`}>
+                    {current.messages}/{msgLimit} msg
+                  </span>
+                )
+              }
+              if (tokLimit) {
+                const pct = Math.min(100, (current.totalTokens / tokLimit) * 100)
+                const color = pct >= 100 ? 'text-red-500' : pct > 80 ? 'text-yellow-500' : 'text-muted-foreground'
+                return (
+                  <span className={`tabular-nums shrink-0 ${color}`} title={`Today: ${formatTokens(current.totalTokens)}/${formatTokens(tokLimit)} tokens`}>
+                    {formatTokens(current.totalTokens)}/{formatTokens(tokLimit)} tok
+                  </span>
+                )
+              }
+              return null
+            })()}
+            {/* "Connected" text — only on desktop (md+) to save mobile space */}
+            <p className="hidden md:inline shrink-0">Connected to LM Studio</p>
           </div>
         </div>
       </div>

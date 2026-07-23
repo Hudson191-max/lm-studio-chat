@@ -419,7 +419,7 @@ export async function POST(request: NextRequest) {
               console.log(`[chat] Tool ${toolName} returned ${result.content.length} chars (isError=${result.isError})`)
 
               streamController.enqueue(
-                encoder.encode(`data: ${JSON.stringify({ toolResult: { name: toolName, content: result.content.slice(0, 2000), isError: result.isError } })}\n\n`)
+                encoder.encode(`data: ${JSON.stringify({ toolResult: { name: toolName, content: result.content.slice(0, 8000), isError: result.isError } })}\n\n`)
               )
 
               currentMessages.push({
