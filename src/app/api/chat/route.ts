@@ -1,5 +1,6 @@
 import { db } from '@/lib/db'
 import { callMcpTool } from '@/lib/mcp-client'
+import { checkRateLimit, recordUsage } from '@/lib/rate-limit-usage'
 
 interface ToolCallData {
   index: number
@@ -50,6 +51,20 @@ export async function POST(request: NextRequest) {
         headers: { 'Content-Type': 'application/json' },
       })
     }
+
+    // Check per-user daily rate limit (admins are exempt)
+    const rateCheck = await checkRateLimit(session!.user.id)
+    if (!rateCheck.allowed) {
+      return new Response(JSON.stringify({ error: rateCheck.reason }), {
+        status: 429,
+        headers: { 'Content-Type': 'application/json' },
+      })
+    }
+
+    // Track total usage across all tool rounds to record at the end
+    let totalPromptTokens = 0
+    let totalCompletionTokens = 0
+    let totalMessages = regenerate ? 0 : 1
 
     // Fetch settings
     let lmStudioUrl = 'http://localhost:1234/v1'
@@ -289,6 +304,9 @@ export async function POST(request: NextRequest) {
                       completionTokens: parsed.usage.completion_tokens || 0,
                       totalTokens: parsed.usage.total_tokens || 0,
                     }
+                    // Accumulate across all tool rounds
+                    totalPromptTokens += usage.promptTokens
+                    totalCompletionTokens += usage.completionTokens
                     streamController.enqueue(
                       encoder.encode(`data: ${JSON.stringify({ tokenUsage: usage })}\n\n`)
                     )
@@ -430,6 +448,18 @@ export async function POST(request: NextRequest) {
             } catch {
               // Log but don't fail
             }
+          }
+
+          // Record daily usage for rate limiting (best-effort, don't fail the stream)
+          try {
+            await recordUsage(session!.user.id, {
+              messages: totalMessages,
+              promptTokens: totalPromptTokens,
+              completionTokens: totalCompletionTokens,
+              totalTokens: totalPromptTokens + totalCompletionTokens,
+            })
+          } catch {
+            // non-fatal
           }
         }
       },

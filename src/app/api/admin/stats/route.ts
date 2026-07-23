@@ -39,6 +39,8 @@ export async function GET() {
         username: true,
         role: true,
         createdAt: true,
+        dailyMessageLimit: true,
+        dailyTokenLimit: true,
         _count: {
           select: {
             conversations: true,
@@ -48,6 +50,21 @@ export async function GET() {
       },
       orderBy: { createdAt: 'asc' },
     })
+
+    // Today's usage per user (for rate limit display)
+    const usageToday = new Date()
+    usageToday.setUTCHours(0, 0, 0, 0)
+    const todayUsage = await db.usageRecord.findMany({
+      where: { date: usageToday },
+      select: {
+        userId: true,
+        messages: true,
+        promptTokens: true,
+        completionTokens: true,
+        totalTokens: true,
+      },
+    })
+    const usageByUserId = new Map(todayUsage.map((u) => [u.userId, u]))
 
     // Recent login attempts (last 50)
     const recentLogins = await db.loginAttempt.findMany({
@@ -80,10 +97,21 @@ export async function GET() {
       totalLogins,
       messagesToday,
       activeToday,
-      users: usersWithStats.map((u) => ({
-        ...u,
-        messageCount: userMessageCounts[u.id] || 0,
-      })),
+      users: usersWithStats.map((u) => {
+        const usage = usageByUserId.get(u.id)
+        return {
+          ...u,
+          messageCount: userMessageCounts[u.id] || 0,
+          todayUsage: usage
+            ? {
+                messages: usage.messages,
+                promptTokens: usage.promptTokens,
+                completionTokens: usage.completionTokens,
+                totalTokens: usage.totalTokens,
+              }
+            : { messages: 0, promptTokens: 0, completionTokens: 0, totalTokens: 0 },
+        }
+      }),
       recentLogins,
     })
   } catch (err) {

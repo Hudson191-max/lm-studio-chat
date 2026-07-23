@@ -2,7 +2,7 @@
 
 import { useEffect, useRef, useCallback, useState } from 'react'
 import { useChatStore } from '@/store/chat-store'
-import { Bot, User, Loader2, RefreshCw, Pencil, Check, X, Wrench, Brain, ChevronDown, ChevronRight, Image as ImageIcon, FileText } from 'lucide-react'
+import { Bot, User, Loader2, RefreshCw, Pencil, Check, X, Wrench, Brain, ChevronDown, ChevronRight, Image as ImageIcon, FileText, GitBranch } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Textarea } from '@/components/ui/textarea'
 import { MarkdownContent } from '@/components/chat/markdown-content'
@@ -63,6 +63,53 @@ export function ChatMessages() {
     window.dispatchEvent(new CustomEvent('chat:regenerate'))
   }
 
+  const handleBranch = async (messageId: string) => {
+    const convoId = useChatStore.getState().activeConversationId
+    if (!convoId) return
+    try {
+      const res = await fetch(`/api/conversations/${convoId}/branch`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ fromMessageId: messageId }),
+      })
+      const newConvo = await res.json()
+      if (!res.ok) {
+        alert(newConvo.error || 'Failed to create branch')
+        return
+      }
+      // Add the new conversation to the sidebar and switch to it
+      useChatStore.getState().addConversation({
+        id: newConvo.id,
+        title: newConvo.title,
+        systemPrompt: newConvo.systemPrompt,
+        createdAt: newConvo.createdAt,
+        updatedAt: newConvo.updatedAt,
+      })
+      // Load the branched messages into the chat
+      if (newConvo.messages) {
+        useChatStore.getState().setMessages(
+          newConvo.messages.map((m: { id: string; role: string; content: string; thinking?: string; images?: string; toolCalls?: string; editedAt?: string; createdAt?: string }) => ({
+            id: m.id,
+            role: m.role as 'user' | 'assistant',
+            content: m.content,
+            thinking: m.thinking || undefined,
+            images: m.images ? (typeof m.images === 'string' ? (() => {
+              try {
+                const p = JSON.parse(m.images)
+                return Array.isArray(p) ? p : p.images
+              } catch { return undefined }
+            })() : undefined) : undefined,
+            toolCalls: m.toolCalls ? JSON.parse(m.toolCalls) : undefined,
+            editedAt: m.editedAt,
+            createdAt: m.createdAt,
+          }))
+        )
+      }
+    } catch (err) {
+      alert('Failed to create branch: ' + (err instanceof Error ? err.message : ''))
+    }
+  }
+
   return (
     <div
       ref={scrollRef}
@@ -96,6 +143,7 @@ export function ChatMessages() {
             onSaveEdit={() => saveEdit(msg.id)}
             onCancelEdit={cancelEdit}
             onRegenerate={msg.role === 'assistant' && idx === messages.length - 1 && !isStreaming ? handleRegenerate : undefined}
+            onBranch={!isStreaming ? () => handleBranch(msg.id) : undefined}
           />
         ))}
 
@@ -175,6 +223,7 @@ function MessageBubble({
   onSaveEdit,
   onCancelEdit,
   onRegenerate,
+  onBranch,
 }: {
   message: { id: string; role: string; content: string; thinking?: string; images?: string[]; files?: Array<{ name: string; ext: string; chars: number; truncated?: boolean }>; toolCalls?: unknown[]; editedAt?: string }
   isLast?: boolean
@@ -186,6 +235,7 @@ function MessageBubble({
   onSaveEdit?: () => void
   onCancelEdit?: () => void
   onRegenerate?: () => void
+  onBranch?: () => void
 }) {
   const isUser = message.role === 'user'
   const hasImages = message.images && message.images.length > 0
@@ -311,6 +361,17 @@ function MessageBubble({
               title="Regenerate response"
             >
               <RefreshCw className="h-3 w-3" />
+            </Button>
+          )}
+          {onBranch && (
+            <Button
+              variant="ghost"
+              size="icon"
+              className="h-6 w-6 opacity-0 group-hover:opacity-100 transition-opacity"
+              onClick={onBranch}
+              title="Branch from here (create a new conversation copy up to this message)"
+            >
+              <GitBranch className="h-3 w-3" />
             </Button>
           )}
         </div>

@@ -34,6 +34,9 @@ interface UserRow {
   role: string
   createdAt: string
   messageCount: number
+  dailyMessageLimit: number | null
+  dailyTokenLimit: number | null
+  todayUsage: { messages: number; promptTokens: number; completionTokens: number; totalTokens: number }
   _count: { conversations: number; loginAttempts: number }
 }
 
@@ -143,6 +146,24 @@ export default function AdminPage() {
       // silent
     } finally {
       setDeletingId(null)
+    }
+  }
+
+  // Update per-user daily rate limits (admin only)
+  const updateLimits = async (userId: string, limits: { dailyMessageLimit?: number | null; dailyTokenLimit?: number | null }) => {
+    try {
+      const res = await fetch(`/api/admin/users/${userId}/limits`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(limits),
+      })
+      if (!res.ok) {
+        const data = await res.json()
+        alert(data.error || 'Failed to update limits')
+      }
+      loadStats()  // refresh to show updated values
+    } catch {
+      alert('Failed to update limits')
     }
   }
 
@@ -283,7 +304,8 @@ export default function AdminPage() {
                               <TableHead>Role</TableHead>
                               <TableHead>Chats</TableHead>
                               <TableHead>Messages</TableHead>
-                              <TableHead>Logins</TableHead>
+                              <TableHead>Today (msgs/tokens)</TableHead>
+                              <TableHead>Daily Limits (msgs/tokens)</TableHead>
                               <TableHead>Created</TableHead>
                               <TableHead className="w-10"></TableHead>
                             </TableRow>
@@ -303,7 +325,48 @@ export default function AdminPage() {
                                 </TableCell>
                                 <TableCell>{user._count.conversations}</TableCell>
                                 <TableCell>{user.messageCount}</TableCell>
-                                <TableCell>{user._count.loginAttempts}</TableCell>
+                                <TableCell className="text-xs">
+                                  {user.todayUsage.messages}
+                                  {' / '}
+                                  {user.todayUsage.totalTokens.toLocaleString()}
+                                </TableCell>
+                                <TableCell className="text-xs">
+                                  {user.role === 'admin' ? (
+                                    <span className="text-muted-foreground">exempt</span>
+                                  ) : (
+                                    <div className="flex items-center gap-1">
+                                      <Input
+                                        type="number"
+                                        min={0}
+                                        placeholder="∞"
+                                        defaultValue={user.dailyMessageLimit ?? ''}
+                                        onBlur={(e) => {
+                                          const v = e.target.value === '' ? null : parseInt(e.target.value, 10)
+                                          if (v !== user.dailyMessageLimit && (v === null || (!isNaN(v) && v >= 0))) {
+                                            updateLimits(user.id, { dailyMessageLimit: v })
+                                          }
+                                        }}
+                                        className="h-6 w-16 px-1 text-xs"
+                                        title="Daily message limit (empty = unlimited)"
+                                      />
+                                      <span className="text-muted-foreground">/</span>
+                                      <Input
+                                        type="number"
+                                        min={0}
+                                        placeholder="∞"
+                                        defaultValue={user.dailyTokenLimit ?? ''}
+                                        onBlur={(e) => {
+                                          const v = e.target.value === '' ? null : parseInt(e.target.value, 10)
+                                          if (v !== user.dailyTokenLimit && (v === null || (!isNaN(v) && v >= 0))) {
+                                            updateLimits(user.id, { dailyTokenLimit: v })
+                                          }
+                                        }}
+                                        className="h-6 w-20 px-1 text-xs"
+                                        title="Daily token limit (empty = unlimited)"
+                                      />
+                                    </div>
+                                  )}
+                                </TableCell>
                                 <TableCell className="text-xs text-muted-foreground">{formatDate(user.createdAt)}</TableCell>
                                 <TableCell>
                                   {user.id !== session.user?.id && (
