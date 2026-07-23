@@ -388,11 +388,11 @@ lm-studio-chat/
 > - **Not audited** — This code has not been professionally security-audited. If you plan to expose it to the internet, consider additional security measures (HTTPS, rate limiting, fail2ban, etc.).
 >
 > By using this software, you accept full responsibility for any consequences.
+>
+## contact
+If you have any questions, need help, or want to report a bug, feel free to reach out:
 
-##contact
-
-Have questions? DM me on Discord: @djdries
-
+DM me on Discord: @djdries
 ## License
 
 MIT
