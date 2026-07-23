@@ -390,9 +390,11 @@ lm-studio-chat/
 > By using this software, you accept full responsibility for any consequences.
 >
 ## contact
+
 If you have any questions, need help, or want to report a bug, feel free to reach out:
 
-DM me on Discord: @djdries
+**DM me on Discord:** @djdries — [Profile Link](https://discord.com/users/YOUR_NUMERIC_ID)
+
 ## License
 
 MIT
