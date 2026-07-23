@@ -27,6 +27,10 @@ export default function Home() {
   const activeConversationId = useChatStore((s) => s.activeConversationId)
   const conversations = useChatStore((s) => s.conversations)
   const setMcpServers = useChatStore((s) => s.setMcpServers)
+  const setAvailableModels = useChatStore((s) => s.setAvailableModels)
+  const setModelContextLengths = useChatStore((s) => s.setModelContextLengths)
+  const setSelectedModel = useChatStore((s) => s.setSelectedModel)
+  const setConnected = useChatStore((s) => s.setConnected)
 
   // Load conversations when authenticated
   useEffect(() => {
@@ -45,7 +49,28 @@ export default function Home() {
       .then((res) => res.json())
       .then((data) => setMcpServers(Array.isArray(data) ? data : []))
       .catch(() => {})
-  }, [status, setConversations, setIsLoadingConversations, setMcpServers])
+
+    // Fetch available models + context lengths from LM Studio so the
+    // token usage indicator works without opening Settings first.
+    fetch('/api/status')
+      .then((res) => res.json())
+      .then((data) => {
+        setConnected(!!data.connected)
+        const models: Array<{ id: string; contextLength?: number }> = data.models || []
+        setAvailableModels(models.map((m) => m.id))
+        const ctxMap: Record<string, number> = {}
+        for (const m of models) {
+          if (m.contextLength) ctxMap[m.id] = m.contextLength
+        }
+        setModelContextLengths(ctxMap)
+        // Auto-select first model if none selected
+        const currentSelected = useChatStore.getState().selectedModel
+        if (models.length > 0 && !currentSelected) {
+          setSelectedModel(models[0].id)
+        }
+      })
+      .catch(() => {})
+  }, [status, setConversations, setIsLoadingConversations, setMcpServers, setAvailableModels, setModelContextLengths, setSelectedModel, setConnected])
 
   // Register service worker for PWA
   useEffect(() => {
