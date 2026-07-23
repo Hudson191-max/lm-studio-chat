@@ -389,6 +389,10 @@ lm-studio-chat/
 >
 > By using this software, you accept full responsibility for any consequences.
 
+##contact
+
+> Have questions? DM me on Discord: @djdries
+
 ## License
 
 MIT
