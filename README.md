@@ -391,7 +391,7 @@ lm-studio-chat/
 
 ##contact
 
-> Have questions? DM me on Discord: @djdries
+Have questions? DM me on Discord: @djdries
 
 ## License
 
