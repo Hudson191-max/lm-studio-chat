@@ -11,6 +11,8 @@ import { Label } from '@/components/ui/label'
 import { Switch } from '@/components/ui/switch'
 import { Plus, Trash2, Loader2, RefreshCw, Wrench, Plug, Search, CheckCircle2, XCircle } from 'lucide-react'
 import { useToast } from '@/hooks/use-toast'
+import { Tabs, TabsList, TabsTrigger, TabsContent } from '@/components/ui/tabs'
+import { MarketplaceTab } from '@/components/chat/marketplace-tab'
 
 const HOUND_URL = 'http://127.0.0.1:8765/mcp'
 type HoundStatus = 'checking' | 'running' | 'not-running'
@@ -204,7 +206,7 @@ export function McpDialog() {
 
   return (
     <Dialog open={mcpOpen} onOpenChange={setMcpOpen}>
-      <DialogContent className="sm:max-w-md max-h-[80vh] overflow-y-auto">
+      <DialogContent className="sm:max-w-lg max-h-[80vh] overflow-y-auto">
         <DialogHeader>
           <DialogTitle>MCP Tools</DialogTitle>
           <DialogDescription>
@@ -213,6 +215,13 @@ export function McpDialog() {
           </DialogDescription>
         </DialogHeader>
 
+        <Tabs defaultValue="servers">
+          <TabsList className="mb-3 w-full">
+            <TabsTrigger value="servers" className="flex-1">My Servers</TabsTrigger>
+            <TabsTrigger value="marketplace" className="flex-1">Marketplace</TabsTrigger>
+          </TabsList>
+
+          <TabsContent value="servers">
         <div className="space-y-4">
           {/* Hound preset */}
           <div className="rounded-lg border border-primary/30 bg-primary/5 p-3 space-y-2">
@@ -391,6 +400,12 @@ export function McpDialog() {
             </div>
           )}
         </div>
+          </TabsContent>
+
+          <TabsContent value="marketplace">
+            <MarketplaceTab />
+          </TabsContent>
+        </Tabs>
       </DialogContent>
     </Dialog>
   )

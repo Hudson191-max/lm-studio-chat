@@ -112,3 +112,17 @@ model UsageRecord {
 
   @@unique([userId, date])
 }
+// Marketplace entries — global (admin-managed, shared by all users).
+// Each row represents a marketplace MCP server that the admin has enabled.
+// The orchestrator reads this table at startup and spawns a bridge for each
+// enabled entry on port 8770+.
+model MarketplaceEntry {
+  id          String   @id @default(cuid())
+  catalogId   String   @unique  // "memory", "time", "google-calendar", etc.
+  name        String             // display name
+  enabled     Boolean  @default(true)
+  port        Int?               // assigned by orchestrator at startup
+  config      String   @default("{}")  // JSON: { token, path, credentials, etc. }
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+}

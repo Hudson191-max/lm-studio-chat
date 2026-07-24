@@ -34,6 +34,31 @@ const fs = require('fs')
 const path = require('path')
 const isWin = process.platform === 'win32'
 
+// Load .env for DATABASE_URL (needed for PrismaClient in marketplace spawning)
+try {
+  const envPath = path.join(__dirname, '..', '.env')
+  if (fs.existsSync(envPath)) {
+    const envContent = fs.readFileSync(envPath, 'utf8')
+    for (const line of envContent.split('\n')) {
+      const match = line.match(/^(\w+)=(.*)$/)
+      if (match && !process.env[match[1]]) {
+        process.env[match[1]] = match[2].replace(/^["']|["']$/g, '')
+      }
+    }
+  }
+} catch {}
+
+// Minimal catalog data (mirrors src/lib/mcp-catalog.ts). The orchestrator
+// can't import TS files, so we inline the spawn commands here.
+const MARKETPLACE_CATALOG = {
+  'memory': { command: 'npx -y @modelcontextprotocol/server-memory', runtime: 'node', nativeHttp: false },
+  'sequential-thinking': { command: 'npx -y @modelcontextprotocol/server-sequential-thinking', runtime: 'node', nativeHttp: false },
+  'time': { command: 'uvx mcp-server-time', runtime: 'python', nativeHttp: false },
+  'fetch': { command: 'uvx mcp-server-fetch', runtime: 'python', nativeHttp: false },
+  'hound': { command: 'hound --http --host 127.0.0.1 --port {PORT}', runtime: 'python', nativeHttp: true },
+  'google-calendar': { command: 'npx -y google-calendar-mcp', runtime: 'node', nativeHttp: false, envMapping: { clientId: 'GOOGLE_CLIENT_ID', clientSecret: 'GOOGLE_CLIENT_SECRET' } },
+}
+
 const MODE = process.argv[2] || 'start' // 'start' or 'dev'
 const HOUND_PORT = process.env.HOUND_PORT || '8765'
 const HOUND_HOST = process.env.HOUND_HOST || '127.0.0.1'
@@ -281,6 +306,140 @@ function startHound() {
   return proc
 }
 
+/**
+ * Spawn marketplace MCP servers (each bridged to HTTP on port 8770+).
+ * Reads enabled entries from the DB, spawns a bridge for each, and updates
+ * the assigned port + creates an McpServer entry with the HTTP URL.
+ */
+let marketplaceProcs = []
+
+async function startMarketplaceServers() {
+  let prisma
+  try {
+    const { PrismaClient } = require('@prisma/client')
+    prisma = new PrismaClient()
+  } catch {
+    console.log('[orchestrator] Prisma client not available — skipping marketplace servers.')
+    return
+  }
+
+  let entries = []
+  try {
+    entries = await prisma.marketplaceEntry.findMany({ where: { enabled: true } })
+  } catch (err) {
+    console.log('[orchestrator] Could not read marketplace entries (DB may not be migrated yet):', err.message)
+    await prisma.$disconnect().catch(() => {})
+    return
+  }
+
+  if (entries.length === 0) {
+    console.log('[orchestrator] No marketplace servers enabled.')
+    await prisma.$disconnect().catch(() => {})
+    return
+  }
+
+  console.log(`[orchestrator] Starting ${entries.length} marketplace server(s)...`)
+
+  let port = 8770
+  for (const entry of entries) {
+    const catalog = MARKETPLACE_CATALOG[entry.catalogId]
+    if (!catalog) {
+      console.log(`[orchestrator] Unknown catalog ID: ${entry.catalogId} — skipping.`)
+      continue
+    }
+
+    // Parse config (for entries like Google Calendar that need credentials)
+    let config = {}
+    try { config = JSON.parse(entry.config || '{}') } catch {}
+
+    // Build env vars from config
+    const env = { ...process.env }
+    if (catalog.envMapping) {
+      for (const [configKey, envVar] of Object.entries(catalog.envMapping)) {
+        if (config[configKey]) env[envVar] = config[configKey]
+      }
+    }
+
+    const currentPort = port++
+    let cmd, args, useShell
+
+    if (catalog.nativeHttp) {
+      // Hound: spawn directly (has built-in --http)
+      cmd = catalog.command.replace('{PORT}', String(currentPort))
+      args = []
+      useShell = true
+    } else {
+      // Use supergateway bridge (Node, no Python needed for the bridge itself)
+      cmd = 'npx'
+      args = ['-y', 'supergateway', '--stdio', catalog.command, '--port', String(currentPort)]
+      useShell = false
+    }
+
+    console.log(`[orchestrator] Starting ${entry.name} (${entry.catalogId}) on port ${currentPort}...`)
+
+    const proc = spawn(cmd, args, {
+      stdio: ['ignore', 'pipe', 'pipe'],
+      shell: useShell,
+      env,
+    })
+
+    proc.stdout.on('data', (chunk) => prefix(entry.catalogId, chunk))
+    proc.stderr.on('data', (chunk) => prefix(entry.catalogId, chunk))
+
+    proc.on('error', (err) => {
+      console.log(`[orchestrator] Failed to start ${entry.name}: ${err.message}`)
+    })
+
+    proc.on('exit', (code, signal) => {
+      if (!shuttingDown) {
+        console.log(`[orchestrator] ${entry.name} exited (code=${code}).`)
+      }
+    })
+
+    marketplaceProcs.push(proc)
+
+    // Update the port in the DB + create an McpServer entry so the app picks it up
+    try {
+      await prisma.marketplaceEntry.update({
+        where: { catalogId: entry.catalogId },
+        data: { port: currentPort },
+      })
+
+      const httpUrl = `http://127.0.0.1:${currentPort}/mcp`
+      // Create or update an McpServer entry for this marketplace server.
+      // Use a synthetic userId — we'll use the first admin account, or if none,
+      // we'll use a placeholder that the app can handle.
+      const admin = await prisma.account.findFirst({ where: { role: 'admin' }, select: { id: true } })
+      if (admin) {
+        await prisma.mcpServer.upsert({
+          where: { id: `marketplace-${entry.catalogId}` },
+          create: {
+            id: `marketplace-${entry.catalogId}`,
+            name: entry.name,
+            url: httpUrl,
+            enabled: true,
+            toolsJson: '[]',
+            userId: admin.id,
+          },
+          update: {
+            url: httpUrl,
+            enabled: true,
+          },
+        })
+      }
+
+      console.log(`[orchestrator] ${entry.name} ready at ${httpUrl}`)
+    } catch (err) {
+      console.log(`[orchestrator] Failed to register ${entry.name} in DB: ${err.message}`)
+    }
+
+    // Small delay between servers to avoid port conflicts
+    await new Promise((r) => setTimeout(r, 300))
+  }
+
+  await prisma.$disconnect().catch(() => {})
+}
+
 function startNext() {
   const nextArgs = MODE === 'dev' ? ['dev', '-p', APP_PORT] : ['start', '-p', APP_PORT]
   console.log(`[orchestrator] Starting Next.js (${MODE}) on port ${APP_PORT}...`)
@@ -338,6 +497,12 @@ function shutdown(exitCode) {
   } else if (houndProc && !weStartedHound) {
     console.log('[orchestrator] Leaving Hound running (we did not start it).')
   }
+  // Kill marketplace server processes
+  for (const proc of marketplaceProcs) {
+    if (proc && !proc.killed) {
+      try { proc.kill(isWin ? 'SIGTERM' : 'SIGINT') } catch {}
+    }
+  }
   if (nextProc && !nextProc.killed) {
     try { nextProc.kill(isWin ? 'SIGTERM' : 'SIGINT') } catch {}
   }
@@ -346,6 +511,11 @@ function shutdown(exitCode) {
   setTimeout(() => {
     if (weStartedHound && houndProc && !houndProc.killed) {
       try { houndProc.kill('SIGKILL') } catch {}
+    }
+    for (const proc of marketplaceProcs) {
+      if (proc && !proc.killed) {
+        try { proc.kill('SIGKILL') } catch {}
+      }
     }
     if (nextProc && !nextProc.killed) {
       try { nextProc.kill('SIGKILL') } catch {}
@@ -399,7 +569,7 @@ if (process.argv.includes('--kill-next')) {
 
 // Start both
 console.log('══════════════════════════════════════════════════════════════════')
-console.log('  LM Studio Chat — starting (with Hound MCP if available)')
+console.log('  LM Studio Chat — starting (with Hound + Marketplace MCP servers)')
 console.log('══════════════════════════════════════════════════════════════════')
 console.log('')
 
@@ -421,7 +591,10 @@ console.log('')
     console.log('[orchestrator] SKIP_HOUND=1 — not launching Hound.')
   }
 
-  // Small delay so Hound logs come before Next.js logs
+  // Spawn marketplace MCP servers (reads enabled entries from the DB)
+  await startMarketplaceServers()
+
+  // Small delay so Hound/marketplace logs come before Next.js logs
   setTimeout(() => {
     nextProc = startNext()
   }, 500)
