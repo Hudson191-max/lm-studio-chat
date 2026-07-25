@@ -369,9 +369,18 @@ async function startMarketplaceServers() {
       args = []
       useShell = true
     } else {
-      // Use supergateway bridge (Node, no Python needed for the bridge itself)
+      // Use supergateway bridge in Streamable HTTP mode (so /mcp endpoint works
+      // with our mcp-client.ts which speaks the 2025-03-26 streamable HTTP spec).
+      // Without --outputTransport streamableHttp, supergateway defaults to SSE
+      // mode which uses /sse + /message endpoints (incompatible with our client).
       cmd = 'npx'
-      args = ['-y', 'supergateway', '--stdio', catalog.command, '--port', String(currentPort)]
+      args = [
+        '-y', 'supergateway',
+        '--stdio', catalog.command,
+        '--outputTransport', 'streamableHttp',
+        '--port', String(currentPort),
+        '--streamableHttpPath', '/mcp',
+      ]
       useShell = false
     }
 
