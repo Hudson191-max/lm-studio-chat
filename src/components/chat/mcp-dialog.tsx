@@ -86,8 +86,9 @@ export function McpDialog() {
     setHoundAlreadyAdded(mcpServers.some((s) => s.url === HOUND_URL))
   }, [mcpServers])
 
-  // Auto-refresh: re-probe Hound status + any 0-tool servers every 15 seconds
-  // while the dialog is open. Stops when dialog closes or all servers have tools.
+  // Auto-refresh: re-probe Hound status + any 0-tool servers every 5 seconds
+  // while the dialog is open. More frequent than before because supergateway
+  // servers can take ~10s to start up, and we want tools to appear quickly.
   useEffect(() => {
     if (!mcpOpen) return
     const interval = setInterval(async () => {
@@ -95,23 +96,27 @@ export function McpDialog() {
       if (houndStatus === 'not-running') {
         probeHound()
       }
-      // Re-probe any MCP server with 0 tools (it may have just started up)
+      // Re-probe any MCP server with 0 tools (or undefined tools).
+      // Marketplace servers start with empty toolsJson and need a refresh
+      // once supergateway finishes spawning the underlying MCP server.
+      let reloaded = false
       for (const server of mcpServers) {
-        if (server.tools && server.tools.length === 0) {
+        if (!server.tools || server.tools.length === 0) {
           try {
             const res = await fetch(`/api/mcp/probe?url=${encodeURIComponent(server.url)}`)
             const data = await res.json()
             if (data.reachable && data.toolCount > 0) {
               // Found tools — refresh this server's stored tools via the refresh endpoint
               await fetch(`/api/mcp/${server.id}`, { method: 'POST' })
-              loadServers()  // reload the list to show the discovered tools
+              reloaded = true
             }
           } catch {
             // ignore — will retry next interval
           }
         }
       }
-    }, 15000)
+      if (reloaded) loadServers()  // reload the list to show discovered tools
+    }, 5000)
     return () => clearInterval(interval)
   }, [mcpOpen, mcpServers, houndStatus])
 
