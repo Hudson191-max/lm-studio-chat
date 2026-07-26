@@ -23,19 +23,23 @@ export async function PATCH(
     dailyTokenLimit?: number | null
   }
 
-  // Validate: must be null or a positive integer
-  const validate = (v: unknown, name: string): number | null | undefined => {
+  // Validate: must be null or a non-negative integer within reasonable bounds.
+  // Caps prevent OOM crashes from absurd values like "0000000000000000000000".
+  const validate = (v: unknown, name: string, max: number): number | null | undefined => {
     if (v === null || v === undefined) return v as null | undefined
     const n = Number(v)
     if (!Number.isFinite(n) || n < 0 || !Number.isInteger(n)) {
       throw new Error(`${name} must be null or a non-negative integer`)
     }
+    if (n > max) {
+      throw new Error(`${name} exceeds maximum allowed value (${max.toLocaleString()})`)
+    }
     return n
   }
 
   try {
-    const msgLimit = validate(dailyMessageLimit, 'dailyMessageLimit')
-    const tokLimit = validate(dailyTokenLimit, 'dailyTokenLimit')
+    const msgLimit = validate(dailyMessageLimit, 'dailyMessageLimit', 1000000)
+    const tokLimit = validate(dailyTokenLimit, 'dailyTokenLimit', 10000000000)
 
     const data: { dailyMessageLimit?: number | null; dailyTokenLimit?: number | null } = {}
     if (msgLimit !== undefined) data.dailyMessageLimit = msgLimit

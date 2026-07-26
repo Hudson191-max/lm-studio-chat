@@ -29,6 +29,23 @@ import { ScrollArea } from '@/components/ui/scroll-area'
 import { useChatStore } from '@/store/chat-store'
 import { formatTokens } from '@/lib/format'
 
+/**
+ * Parse a limit input value safely.
+ * - empty string → null (unlimited)
+ * - non-numeric or negative → null (ignore bad input)
+ * - exceeds max → capped at max (prevents OOM from absurd values like "0000000000000000000000")
+ * - otherwise → the integer value
+ *
+ * This prevents the admin panel from crashing when a user types too many zeros.
+ */
+function parseLimit(value: string, max: number): number | null {
+  if (value === '' || value === null || value === undefined) return null
+  const n = Number(value)
+  if (!Number.isFinite(n) || n < 0 || !Number.isInteger(n)) return null
+  if (n > max) return max
+  return n
+}
+
 interface UserRow {
   id: string
   username: string
@@ -364,30 +381,32 @@ export default function AdminPage() {
                                         <Input
                                           type="number"
                                           min={0}
+                                          max={1000000}
                                           placeholder="msg ∞"
                                           defaultValue={user.dailyMessageLimit ?? ''}
                                           onBlur={(e) => {
-                                            const v = e.target.value === '' ? null : parseInt(e.target.value, 10)
-                                            if (v !== user.dailyMessageLimit && (v === null || (!isNaN(v) && v >= 0))) {
+                                            const v = parseLimit(e.target.value, 1000000)
+                                            if (v !== user.dailyMessageLimit) {
                                               updateLimits(user.id, { dailyMessageLimit: v })
                                             }
                                           }}
                                           className="h-5 w-16 px-1 text-[10px]"
-                                          title="Daily message limit (empty = unlimited)"
+                                          title="Daily message limit (empty = unlimited, max 1,000,000)"
                                         />
                                         <Input
                                           type="number"
                                           min={0}
+                                          max={10000000000}
                                           placeholder="tok ∞"
                                           defaultValue={user.dailyTokenLimit ?? ''}
                                           onBlur={(e) => {
-                                            const v = e.target.value === '' ? null : parseInt(e.target.value, 10)
-                                            if (v !== user.dailyTokenLimit && (v === null || (!isNaN(v) && v >= 0))) {
+                                            const v = parseLimit(e.target.value, 10000000000)
+                                            if (v !== user.dailyTokenLimit) {
                                               updateLimits(user.id, { dailyTokenLimit: v })
                                             }
                                           }}
                                           className="h-5 w-20 px-1 text-[10px]"
-                                          title="Daily token limit (empty = unlimited)"
+                                          title="Daily token limit (empty = unlimited, max 10,000,000,000)"
                                         />
                                       </div>
                                     </div>
