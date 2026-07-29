@@ -57,6 +57,7 @@ const MARKETPLACE_CATALOG = {
   'fetch': { command: 'uvx mcp-server-fetch', runtime: 'python', nativeHttp: false },
   'hound': { command: 'hound --http --host 127.0.0.1 --port {PORT}', runtime: 'python', nativeHttp: true },
   'google-calendar': { command: 'npx -y google-calendar-mcp', runtime: 'node', nativeHttp: false, envMapping: { clientId: 'GOOGLE_CLIENT_ID', clientSecret: 'GOOGLE_CLIENT_SECRET' } },
+  'filesystem': { command: 'npx -y @modelcontextprotocol/server-filesystem {PATH}', runtime: 'node', nativeHttp: false, configArgKey: 'path' },
 }
 
 const MODE = process.argv[2] || 'start' // 'start' or 'dev'
@@ -373,10 +374,17 @@ async function startMarketplaceServers() {
       // with our mcp-client.ts which speaks the 2025-03-26 streamable HTTP spec).
       // Without --outputTransport streamableHttp, supergateway defaults to SSE
       // mode which uses /sse + /message endpoints (incompatible with our client).
+
+      // Substitute config values into the command (e.g. {PATH} for filesystem)
+      let stdioCmd = catalog.command
+      if (catalog.configArgKey && config[catalog.configArgKey]) {
+        stdioCmd = stdioCmd.replace('{PATH}', config[catalog.configArgKey])
+      }
+
       cmd = 'npx'
       args = [
         '-y', 'supergateway',
-        '--stdio', catalog.command,
+        '--stdio', stdioCmd,
         '--outputTransport', 'streamableHttp',
         '--port', String(currentPort),
         '--streamableHttpPath', '/mcp',

@@ -147,6 +147,28 @@ export const MCP_CATALOG: CatalogEntry[] = [
       clientSecret: 'GOOGLE_CLIENT_SECRET',
     },
   },
+  {
+    catalogId: 'filesystem',
+    name: 'Filesystem',
+    description: 'Read, write, list, and search files on your computer. The AI can access any directory you allow.',
+    category: 'developer',
+    icon: '📁',
+    configRequired: true,
+    runtime: 'node',
+    // The path is appended to the command as an argument (not an env var)
+    command: 'npx -y @modelcontextprotocol/server-filesystem {PATH}',
+    configApply: 'args',
+    configFields: [
+      {
+        key: 'path',
+        label: 'Directory Path',
+        type: 'path',
+        placeholder: 'C:\\Users\\You\\Documents  (or  /home/you/docs)',
+        help: 'The directory the AI can access. Use an absolute path. The AI will be able to read and write files within this directory only.',
+        required: true,
+      },
+    ],
+  },
 ]
 
 /** Look up a catalog entry by ID. */
