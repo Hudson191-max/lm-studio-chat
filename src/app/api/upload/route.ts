@@ -52,13 +52,12 @@ export async function POST(request: NextRequest) {
     let truncated = false
 
     if (ext === '.pdf') {
-      // pdf-parse v2: requires Uint8Array (not Buffer).
-      // getText() is public, load() is private — getText triggers load internally.
+      // pdf-parse v1: simple API, no workers (works in Next.js server environment).
+      // v2 uses pdfjs-dist which requires a worker file that Next.js can't bundle.
       try {
-        const { PDFParse } = await import('pdf-parse')
-        const uint8 = new Uint8Array(arrayBuffer)
-        const pdf = new PDFParse(uint8)
-        text = (await (pdf as unknown as { getText: () => Promise<string> }).getText()) || ''
+        const pdfParse = (await import('pdf-parse')).default
+        const data = await pdfParse(buffer)
+        text = data.text || ''
       } catch (pdfErr) {
         console.error('PDF parse error:', pdfErr)
         const msg = pdfErr instanceof Error ? pdfErr.message : String(pdfErr)
