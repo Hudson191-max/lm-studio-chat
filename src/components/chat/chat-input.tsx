@@ -135,6 +135,12 @@ export function ChatInput() {
       const fd = new FormData()
       fd.append('file', file)
       const res = await fetch('/api/upload', { method: 'POST', body: fd })
+      // Handle non-JSON responses gracefully (server errors, HTML error pages)
+      const contentType = res.headers.get('content-type') || ''
+      if (!contentType.includes('application/json')) {
+        const text = await res.text().catch(() => '')
+        throw new Error(`Server returned ${res.status}: ${text.slice(0, 200) || 'non-JSON response'}`)
+      }
       const data = await res.json()
       if (!res.ok) {
         throw new Error(data.error || `HTTP ${res.status}`)
