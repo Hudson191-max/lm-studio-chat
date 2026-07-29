@@ -5,7 +5,7 @@ import { useSession, signOut } from 'next-auth/react'
 import { useRouter } from 'next/navigation'
 import {
   Users, MessageSquare, Brain, LogIn, Plus, Trash2, Shield,
-  ArrowLeft, Loader2, Eye, EyeOff, UserPlus, Power
+  ArrowLeft, Loader2, Eye, EyeOff, UserPlus, Power, RotateCcw
 } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
@@ -100,18 +100,37 @@ export default function AdminPage() {
   const [createError, setCreateError] = useState('')
   const [creating, setCreating] = useState(false)
   const [deletingId, setDeletingId] = useState<string | null>(null)
+  const [statsError, setStatsError] = useState<string | null>(null)
 
   const loadStats = useCallback(async () => {
     try {
+      setStatsError(null)
       const res = await fetch('/api/admin/stats')
       if (res.status === 403) {
         router.push('/')
         return
       }
+      if (!res.ok) {
+        setStatsError('Failed to load admin stats. The database may have corrupt data.')
+        setLoading(false)
+        return
+      }
       const data = await res.json()
+      // Defensive: ensure all numeric fields are finite before setting state
+      if (data.users) {
+        for (const u of data.users) {
+          if (u.dailyMessageLimit !== null && !Number.isFinite(u.dailyMessageLimit)) u.dailyMessageLimit = null
+          if (u.dailyTokenLimit !== null && !Number.isFinite(u.dailyTokenLimit)) u.dailyTokenLimit = null
+          if (u.todayUsage) {
+            for (const k of ['messages', 'promptTokens', 'completionTokens', 'totalTokens'] as const) {
+              if (!Number.isFinite(u.todayUsage[k])) u.todayUsage[k] = 0
+            }
+          }
+        }
+      }
       setStats(data)
-    } catch {
-      // silent
+    } catch (err) {
+      setStatsError('Failed to load admin stats: ' + (err instanceof Error ? err.message : ''))
     } finally {
       setLoading(false)
     }
@@ -309,9 +328,34 @@ export default function AdminPage() {
                   <Card>
                     <CardHeader className="flex-row items-center justify-between pb-3">
                       <CardTitle className="text-sm">User Management</CardTitle>
-                      <Button size="sm" onClick={() => setCreateOpen(true)} className="gap-1.5">
-                        <UserPlus className="h-3.5 w-3.5" /> Add User
-                      </Button>
+                      <div className="flex items-center gap-2">
+                        <Button
+                          size="sm"
+                          variant="outline"
+                          className="gap-1.5 text-xs"
+                          onClick={async () => {
+                            if (!confirm('Reset ALL users\' rate limits to unlimited? This cannot be undone.')) return
+                            try {
+                              const res = await fetch('/api/admin/reset-limits', { method: 'POST' })
+                              const data = await res.json()
+                              if (res.ok) {
+                                alert(data.message || 'Limits reset.')
+                                loadStats()
+                              } else {
+                                alert(data.error || 'Failed to reset')
+                              }
+                            } catch {
+                              alert('Failed to reset limits')
+                            }
+                          }}
+                          title="Reset all rate limits to unlimited (emergency fix)"
+                        >
+                          <RotateCcw className="h-3.5 w-3.5" /> Reset Limits
+                        </Button>
+                        <Button size="sm" onClick={() => setCreateOpen(true)} className="gap-1.5">
+                          <UserPlus className="h-3.5 w-3.5" /> Add User
+                        </Button>
+                      </div>
                     </CardHeader>
                     <CardContent className="p-0">
                       <ScrollArea className="max-h-[500px]">
@@ -503,7 +547,33 @@ export default function AdminPage() {
               </Tabs>
             </>
           ) : (
-            <p className="text-center text-muted-foreground py-20">Failed to load stats.</p>
+            <div className="text-center py-20 space-y-4">
+              <p className="text-muted-foreground">{statsError || 'Failed to load stats.'}</p>
+              <div className="flex items-center justify-center gap-2">
+                <Button
+                  variant="outline"
+                  size="sm"
+                  className="gap-1.5"
+                  onClick={() => loadStats()}
+                >
+                  <RotateCcw className="h-3.5 w-3.5" /> Retry
+                </Button>
+                <Button
+                  variant="outline"
+                  size="sm"
+                  className="gap-1.5 text-destructive hover:text-destructive"
+                  onClick={async () => {
+                    if (!confirm('Reset ALL users\' rate limits to unlimited? This fixes corrupt data.')) return
+                    try {
+                      await fetch('/api/admin/reset-limits', { method: 'POST' })
+                      loadStats()
+                    } catch {}
+                  }}
+                >
+                  <RotateCcw className="h-3.5 w-3.5" /> Reset All Limits
+                </Button>
+              </div>
+            </div>
           )}
         </div>
       </div>

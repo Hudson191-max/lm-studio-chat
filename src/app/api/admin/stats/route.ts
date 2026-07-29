@@ -3,6 +3,61 @@ import { NextResponse } from 'next/server'
 import { requireAuth } from '@/lib/auth-guard'
 import { hashPassword } from '@/lib/auth'
 
+const MSG_LIMIT_MAX = 1000000
+const TOK_LIMIT_MAX = 10000000000
+
+/**
+ * Sanitize a limit value. Returns null for anything invalid:
+ * - null/undefined → null (unlimited, valid)
+ * - NaN / Infinity / non-integer → null
+ * - negative → null
+ * - exceeds max → null (auto-fix will clean this up in the DB)
+ */
+function sanitizeLimit(v: unknown, max: number): number | null {
+  if (v === null || v === undefined) return null
+  const n = Number(v)
+  if (!Number.isFinite(n) || n < 0 || !Number.isInteger(n)) return null
+  if (n > max) return null
+  return n
+}
+
+/**
+ * Self-healing: scan all accounts for invalid limit values and auto-fix them.
+ * Called at the start of every admin stats fetch. If any account has a bad
+ * value (NaN, Infinity, exceeds max, etc.), it's reset to null in the DB
+ * so the admin panel never crashes from stale corrupt data.
+ */
+async function autoFixBadLimits() {
+  try {
+    const accounts = await db.account.findMany({
+      select: { id: true, dailyMessageLimit: true, dailyTokenLimit: true },
+    })
+    const fixes: Promise<unknown>[] = []
+    for (const a of accounts) {
+      const badMsg = a.dailyMessageLimit !== null && sanitizeLimit(a.dailyMessageLimit, MSG_LIMIT_MAX) === null
+      const badTok = a.dailyTokenLimit !== null && sanitizeLimit(a.dailyTokenLimit, TOK_LIMIT_MAX) === null
+      if (badMsg || badTok) {
+        console.warn(`[admin] Auto-fixing bad limit values for account ${a.id}: msg=${a.dailyMessageLimit} tok=${a.dailyTokenLimit}`)
+        fixes.push(
+          db.account.update({
+            where: { id: a.id },
+            data: {
+              ...(badMsg ? { dailyMessageLimit: null } : {}),
+              ...(badTok ? { dailyTokenLimit: null } : {}),
+            },
+          })
+        )
+      }
+    }
+    if (fixes.length > 0) {
+      await Promise.all(fixes)
+      console.log(`[admin] Auto-fixed ${fixes.length} account(s) with bad limit values`)
+    }
+  } catch {
+    // non-fatal — don't let the self-healing crash the stats endpoint
+  }
+}
+
 // GET /api/admin/stats — Dashboard stats (admin only)
 export async function GET() {
   const { error, session } = await requireAuth()
@@ -10,6 +65,9 @@ export async function GET() {
   if (session?.user?.role !== 'admin') {
     return NextResponse.json({ error: 'Forbidden' }, { status: 403 })
   }
+
+  // Self-heal: fix any bad limit values before returning stats
+  await autoFixBadLimits()
 
   try {
     const totalUsers = await db.account.count()
@@ -99,15 +157,21 @@ export async function GET() {
       activeToday,
       users: usersWithStats.map((u) => {
         const usage = usageByUserId.get(u.id)
+        // Sanitize limit values — prevent NaN/Infinity/huge numbers from
+        // crashing the admin panel. If a value is invalid, treat as null.
+        const safeMsgLimit = sanitizeLimit(u.dailyMessageLimit, 1000000)
+        const safeTokLimit = sanitizeLimit(u.dailyTokenLimit, 10000000000)
         return {
           ...u,
+          dailyMessageLimit: safeMsgLimit,
+          dailyTokenLimit: safeTokLimit,
           messageCount: userMessageCounts[u.id] || 0,
           todayUsage: usage
             ? {
-                messages: usage.messages,
-                promptTokens: usage.promptTokens,
-                completionTokens: usage.completionTokens,
-                totalTokens: usage.totalTokens,
+                messages: usage.messages || 0,
+                promptTokens: usage.promptTokens || 0,
+                completionTokens: usage.completionTokens || 0,
+                totalTokens: usage.totalTokens || 0,
               }
             : { messages: 0, promptTokens: 0, completionTokens: 0, totalTokens: 0 },
         }
